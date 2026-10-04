@@ -15,8 +15,8 @@ def read_trace(path: str | Path) -> list[dict[str, Any]]:
 def _windows(stage_events: list[dict[str, Any]], end: float) -> list[tuple[str, float, float]]:
     """Consecutive (stage, start, end) windows; the time before the first stage is ``setup``."""
     starts = [(0.0, "setup")] + [(e["t"], e["stage"]) for e in stage_events]
-    if len(starts) > 1 and starts[1][0] <= 0.0:
-        starts = starts[1:]
+    if len(starts) > 1 and (starts[1][0] <= 0.0 or starts[1][1] == "setup"):
+        starts = [(0.0, starts[1][1])] + starts[2:]
     windows = []
     for i, (t0, stage) in enumerate(starts):
         t1 = starts[i + 1][0] if i + 1 < len(starts) else end

@@ -45,6 +45,21 @@ def test_stages_cover_the_run_in_order_with_their_own_peaks():
     ]
 
 
+def test_an_explicit_setup_stage_merges_with_the_time_before_it():
+    records = [
+        sample(0.0, 10),
+        event(3.5, "stage", stage="setup"),
+        sample(4.0, 30),
+        event(5.0, "stage", stage="structure"),
+        sample(6.0, 20),
+    ]
+    stages = summarize(records)["stages"]
+    assert [(s["stage"], s["seconds"], s["peak_footprint"]) for s in stages] == [
+        ("setup", 5.0, 30),
+        ("structure", 1.0, 20),
+    ]
+
+
 def test_an_empty_trace_summarizes_to_zeros():
     s = summarize([])
     assert s["peak_footprint"] == 0
