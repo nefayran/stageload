@@ -68,6 +68,8 @@ src/stageload/
   hooks.py       on_call(): run a callback before or after a method of one object
   events.py      Event and the EventSink protocol
   meter.py       macOS memory readers and MemoryMeter
+  trace.py       read_trace() and summarize() for trace files
+  units.py       sizes (8G) and durations (30m) on the command line
   guard.py       admission control and a swap budget for one command
   cli.py         `stageload guard` and `stageload summary`
   pixal3d/
@@ -84,15 +86,15 @@ docs/
 
 ### Core
 
-**`release(module, *, name=None, empty_cache=True) -> int`**
+**`release(module, *, name=None, stage=None, keep=(), empty_cache=True) -> ReleaseStats`**
 Replaces every parameter and buffer of `module` and its submodules with a tensor on the `meta`
 device, runs `gc.collect()` and, if MPS or CUDA is available and `empty_cache` is true, empties
-the allocator cache. Returns the number of bytes freed. The module object stays valid, so
+the allocator cache. Returns `ReleaseStats(nbytes, kept)`: the bytes of storage freed and the
+number of tensors left alone. The module object stays valid, so
 references held elsewhere (for example a local variable inside a pipeline's `run()`) do not keep
 the memory alive. The module is marked as released, and its `forward` raises
 `ReleasedModuleError(name, stage)` instead of the PyTorch error about meta tensors. Tensors whose
-storage is shared with a module that is not being released are left alone and counted in the
-`release` event.
+storage is shared with a module in `keep` are left alone and counted in `kept`.
 
 **`StagedModels(loaders, *, stages, pinned=(), events=None)`**
 A `MutableMapping[str, nn.Module]`.
@@ -171,11 +173,13 @@ before starting, and the only process it ever kills is that job.
 
 ### Port
 
-`Port.load(path)` adds the port's directory to `sys.path`, imports `generate_mps` and `pixal3d`,
-and checks that the names the adapter uses exist: `parse_args`, `load_runtime_deps`,
-`_configure_fdg_environment`, `load_pipeline`, `image_to_asset`, `asset_to_glb`,
-`IMAGE_COND_CONFIGS`, `build_image_cond_model`, and on the pipeline class `get_proj_cond_ss`,
-`get_proj_cond_shape`, `decode_latent` and `preprocess_image`. A missing name stops the run with a
+`load_port(path)` adds the port's directory to `sys.path`, imports `generate_mps` and checks
+the module-level names the adapter uses: `parse_args`, `load_runtime_deps`,
+`_configure_fdg_environment`, `resolve_device`, `output_glb_path`, `load_pipeline`,
+`image_to_asset`, `asset_to_glb`, `save_mesh_checkpoint`, `IMAGE_COND_CONFIGS` and
+`build_image_cond_model`. The pipeline class exists only after the port's `load_runtime_deps()`,
+so `check_pipeline_api` checks its methods (`from_pretrained`, `run`, `preprocess_image`,
+`get_proj_cond_ss`, `get_proj_cond_shape`, `decode_latent`) when the pipeline is built. A missing name stops the run with a
 message naming the tested commit (`0be9e69`). A different commit only prints a warning. The port is
 found from `--port DIR`, then `$PIXAL3D_MAC_DIR`, then `~/local-llm/Pixal3D-mac`.
 
@@ -194,8 +198,10 @@ found from `--port DIR`, then `$PIXAL3D_MAC_DIR`, then `~/local-llm/Pixal3D-mac`
    backbone. Load NAF once and give the same instance to the three extractors that use it.
 5. Set `pipeline.low_vram = False` and `pipeline._device = mps`. Models are created on MPS and are
    never copied to the CPU and back.
-6. Release the RMBG-2 model with `on_call(pipeline, "preprocess_image", after=...)`. MoGe-2 is
-   already loaded and freed inside `image_to_asset` by the port.
+6. Release the RMBG-2 model with `on_call(pipeline, "preprocess_image", after=...)`. The port's
+   `BiRefNet` is a plain wrapper that keeps its weights in `.model`, so the adapter releases the
+   modules the wrapper holds. MoGe-2 is already loaded and freed inside `image_to_asset` by the
+   port.
 7. Install the stage hooks below, run the port's `image_to_asset`, call `models.close()` and release
    the extractors, then run the port's `asset_to_glb`.
 
@@ -229,7 +235,17 @@ stageload-pixal3d IMAGE -o OUT.glb [--port DIR] [--load staged|eager]
 
 The port's arguments are built with its own `parse_args`, so its defaults apply. `--load eager`
 uses the port's `load_pipeline` untouched and is the baseline for comparisons. Both modes write
-the same trace format.
+the same trace format, and both install the same stage hooks; in eager mode they only record
+stage boundaries.
+
+The command repeats the steps of the port's `main()` that matter for one image: the FDG
+environment, the runtime imports, the device, `Image.open`, `image_to_asset`, the optional
+`--save-mesh` checkpoint and `asset_to_glb`. Flags that select other branches of `main()`
+(`--flash-sdpa`, `--load-mesh`, `--load-fixture-07`, and `--free-spent-models` where a local copy
+of the port has it) are refused in both modes, with a pointer to `generate_mps.py`.
+
+A staged pipeline is single-use. Its hooks stay installed and its weights are released by the end
+of the run, so the command builds a new one for every image.
 
 ### Errors
 
