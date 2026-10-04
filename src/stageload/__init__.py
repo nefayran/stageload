@@ -1,6 +1,7 @@
 """Load a multi-stage PyTorch pipeline one stage at a time."""
 
 from .events import Event, EventSink, ListSink
+from .registry import StagedModels
 from .release import ReleasedModuleError, ReleaseStats, release
 
 __version__ = "0.1.0"
@@ -11,5 +12,6 @@ __all__ = [
     "ListSink",
     "ReleaseStats",
     "ReleasedModuleError",
+    "StagedModels",
     "release",
 ]
