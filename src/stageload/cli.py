@@ -48,6 +48,10 @@ def _parser() -> argparse.ArgumentParser:
         "--busy", action="append", default=[], metavar="REGEX",
         help="do not start while a process matches (repeatable)",
     )
+    guard.add_argument(
+        "--quiet-for", type=_arg(parse_duration), default="1m",
+        help="with --busy: start only after no busy process was seen for this long (default 1m)",
+    )
     guard.add_argument("--start-timeout", type=_arg(parse_duration), default="30m")
     guard.add_argument("--poll", type=_arg(parse_duration), default="5s")
     guard.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command ...")
@@ -71,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         swap_limit=args.swap_limit,
         kill_free=args.kill_free,
         busy=tuple(args.busy),
+        quiet_for=args.quiet_for,
         start_timeout=args.start_timeout,
         poll=args.poll,
     )

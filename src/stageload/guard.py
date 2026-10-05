@@ -28,6 +28,7 @@ class GuardConfig:
     swap_limit: int | None = None
     kill_free: int = 10
     busy: tuple[str, ...] = ()
+    quiet_for: float = 0.0
     start_timeout: float = 1800.0
     poll: float = 5.0
     grace: float = 5.0
@@ -83,7 +84,9 @@ def _gb(nbytes: int) -> str:
     return f"{nbytes / GB:.1f} GB"
 
 
-def _no_room_reasons(config: GuardConfig, io: GuardIO, exclude: set[int]) -> list[str]:
+def _no_room_reasons(
+    config: GuardConfig, io: GuardIO, exclude: set[int], quiet: dict[str, float | None]
+) -> list[str]:
     reasons = []
     level = io.level()
     swap = io.swap_used()
@@ -96,7 +99,18 @@ def _no_room_reasons(config: GuardConfig, io: GuardIO, exclude: set[int]) -> lis
     if config.busy:
         busy = busy_processes(config.busy, io.processes(), exclude)
         if busy:
+            quiet["since"] = None
             reasons.append("busy: " + "; ".join(command[:80] for command in busy[:3]))
+        elif config.quiet_for > 0:
+            # a chain of jobs leaves short gaps between them: 05.10 a run started in such a gap
+            # and the next video job took swap past its budget within 20 s
+            if quiet["since"] is None:
+                quiet["since"] = io.clock()
+            quiet_so_far = io.clock() - quiet["since"]
+            if quiet_so_far < config.quiet_for:
+                reasons.append(
+                    f"quiet for {quiet_so_far:.0f} s of {config.quiet_for:.0f} s"
+                )
     return reasons
 
 
@@ -104,14 +118,16 @@ def wait_for_room(config: GuardConfig, io: GuardIO) -> bool:
     exclude = {os.getpid(), os.getppid()}
     deadline = io.clock() + config.start_timeout
     last = ""
+    quiet: dict[str, float | None] = {"since": None}
     while True:
-        reasons = _no_room_reasons(config, io, exclude)
+        reasons = _no_room_reasons(config, io, exclude, quiet)
         if not reasons:
             return True
         reason = ", ".join(reasons)
-        if reason != last:
+        kind = reason.split(" for ")[0] if reason.startswith("quiet") else reason
+        if kind != last:
             io.log(f"guard: waiting ({reason})")
-            last = reason
+            last = kind
         if io.clock() >= deadline:
             io.log(f"guard: no room after {config.start_timeout:.0f} s ({reason})")
             return False

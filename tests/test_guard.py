@@ -96,3 +96,28 @@ def test_the_command_exit_code_is_passed_through():
     io, _ = make_io()
     cmd = [sys.executable, "-c", "import sys; sys.exit(7)"]
     assert run_guarded(cmd, GuardConfig(**QUICK), io) == 7
+
+
+def test_a_gap_between_two_busy_jobs_is_not_enough_to_start():
+    busy_job = (4242, "python ltx-2-mlx generate")
+    snapshots = iter([[busy_job], [], [busy_job], [], [], [], [], []])
+    last = [[]]
+
+    def processes():
+        last[0] = next(snapshots, last[0])
+        return last[0]
+
+    clock_at_start = []
+    io, logs = make_io(processes=processes)
+    original_log = io.log
+
+    def log(line):
+        if "guard: start" in line:
+            clock_at_start.append(io.clock())
+        original_log(line)
+
+    io.log = log
+    config = GuardConfig(busy=("ltx",), quiet_for=2.0, poll=1.0, grace=1.0)
+    assert run_guarded(PASS, config, io) == 0
+    assert clock_at_start and clock_at_start[0] >= 5.0
+    assert any("quiet for" in line for line in logs)

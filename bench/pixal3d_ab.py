@@ -42,7 +42,7 @@ def run_one(python: str, image: Path, out: Path, mode: str, run: int, port: str 
         target += ["--fingerprint", str(out / f"fp-{mode}-{run}")]
     cmd = [
         "nice", "-n", "15", python, "-m", "stageload", "guard", "--wait-free", "40",
-        "--swap-budget", "8G", "--start-timeout", start_timeout, *busy,
+        "--swap-budget", "8G", "--quiet-for", "3m", "--start-timeout", start_timeout, *busy,
         "--", "nice", "-n", "15", *target,
     ]
     with (out / f"{mode}-{run}.log").open("w") as log:
