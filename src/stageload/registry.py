@@ -40,7 +40,9 @@ class StagedModels(MutableMapping[str, nn.Module]):
     ``models[name] = module`` stores a module that has no loader: once released, it stays gone.
     ``del models[name]`` and ``clear()`` release without loading anything. ``pop`` and
     ``popitem`` hand a model over: it comes back with its weights, loaded first if it was not,
-    and the registry forgets it without releasing it.
+    and the registry forgets it without releasing it. A submodule it shares with a model still
+    in the registry (as two models built inside :func:`stageload.share` do) is released with
+    that model.
     """
 
     def __init__(
@@ -95,8 +97,10 @@ class StagedModels(MutableMapping[str, nn.Module]):
         slot = self._slots.get(name)
         if slot is not None and slot.module is module:
             return
-        if slot is not None and slot.module is not None:
-            # the new module may share weights with the one it replaces
+        old = slot.module if slot is not None else None
+        # a wrapper around the old module (torch.compile, an adapter) still needs all of it;
+        # any other replacement may still share some of its weights
+        if old is not None and not any(sub is old for sub in module.modules()):
             self._release(name, keep=[module])
         self._slots[name] = _Slot(loader=None, module=module, loads=1)
 

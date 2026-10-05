@@ -222,3 +222,17 @@ def test_deleting_a_pinned_model_unpins_it():
     models["a"] = nn.Linear(4, 4)
     models.enter("two")
     assert "a" not in models.loaded()
+
+
+def test_a_wrapper_around_the_model_it_replaces_keeps_working():
+    class Wrapper(nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, x):
+            return self.inner(x) * 2
+
+    models, _, _ = make("abc", STAGES)
+    models["a"] = Wrapper(models["a"])
+    assert models["a"](torch.zeros(1, 4)).shape == (1, 4)
