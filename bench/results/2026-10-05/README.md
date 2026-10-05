@@ -9,8 +9,8 @@
   Pipeline `1024_cascade`, seed 7, texture size 2048.
 - Every run is its own process under
   `stageload guard --wait-free 40 --swap-budget 8G --quiet-for 3m`, with `--busy` patterns for
-  the other heavy jobs on this machine. A video job in another session was running between our
-  runs; each run started after three quiet minutes.
+  the other heavy jobs on this machine. A video generation job was running on the machine between
+  our runs; each run started after three quiet minutes.
 - Eager runs stop where the texture stage would begin (`--stop-at texture`). On this machine
   the port's own loading does not get through the texture stage within the guard's limits; see
   [A full eager run](#a-full-eager-run).
@@ -35,11 +35,18 @@
 | decode | – / – | 17.87 / 18.35 |
 | export | – / – | 69.57 / 70.19 |
 
-![Process footprint over time](memory.png)
+![Peak footprint per stage, eager against staged](stages.png)
 
-In every stage both modes ran, eager holds between 11.3 and 17.5 GB more than staged. The staged runs loaded
-eight models (seven, plus the shape decoder a second time for decoding), 13.2 GB in 24 s, out of
-about ten minutes per run.
+In every stage both modes ran, eager holds between 11.3 and 17.5 GB more than staged. The staged
+runs loaded eight models (seven, plus the shape decoder a second time for decoding), 13.2 GB in
+24 s, out of about ten minutes per run.
+
+Most of the texture stage's 30 GB is not weights: the texture model is 2.6 GB and the image
+feature extractors 1.1 GB. When the decode stage began, stageload released both and emptied the
+MPS allocator's cache, and within two seconds the footprint fell from 30.1 GB to 4.5 GB in one
+staged run and to 8.0 GB in the other.
+
+![Process footprint over time](memory.png)
 
 The highest staged footprint is in the export, after every model weight has been released. It
 comes from the port's own mesh processing (remeshing, BVH, cleanup, UV unwrapping, baking), which
@@ -71,22 +78,34 @@ Every run saved a hash and a copy of each sampler's output (`--fingerprint`), an
 | staged-1 / staged-3 | identical | 2.04 | 13,740 / 13,754 |
 
 The sparse structure latent is the same bit for bit in all four runs. From the 512 shape stage on,
-any two runs differ, two eager runs as much as an eager and a staged run: with the same seed the
-port itself does not repeat its sparse stages on MPS. The staged runs stay inside that spread.
-A bit-for-bit comparison of the later stages is not possible with this port on this machine.
+any two runs differ: with the same seed the port itself does not repeat its sparse stages on MPS.
+The one pair of eager runs differs by 1.77, and a staged run differs from an eager one by 1.24
+to 1.86. So these runs cannot show whether staged loading changes the later stages; they show
+that any change is no larger than the port's own variation, which was measured on that single
+eager pair. The texture latent and the GLB were not compared, because the eager runs stop before
+the texture stage on this machine.
 
 ## Building on the CPU (experiment)
 
 The second staged run, in [`cpu-build/`](cpu-build), built every model on the CPU and then moved
-it to MPS, the way the port builds them. That run's footprint was higher in every stage that
-loads a model (shape_512 14.1 GB, shape_1024 16.0, texture 33.9, decode 29.5) and loading took
-82 s instead of 24 s. Its latents differ from the eager runs by 1.84 and 1.12, the same spread as
-above. stageload builds each model directly on the device.
+it to MPS, the way the port builds them. Its peaks were higher in four of the five stages that
+load models, by 2.6 to 11.7 GB (shape_512 14.1 GB, shape_1024 16.0, texture 33.9, decode 29.5),
+and 3.0 GB lower in the structure stage (7.9 GB); loading took 82 s instead of 24 s. Its 512
+shape latent differs from the two eager runs by 1.84 and 1.12, inside the range above.
+stageload builds each model directly on the device.
+
+## Another image
+
+[`showcase/`](showcase) holds the trace of a staged run on the character shown at the top of the
+main README (same settings). It took 416 s and loaded the same eight models, 13.2 GB in 37 s. Its
+peaks were 13.0 GB in shape_1024, 30.1 GB in texture and 20.0 GB in decode; the highest, 59.3 GB,
+was again in the export. Available memory stayed at 22 % or more.
 
 ## Files
 
 - `*.trace.jsonl`: one trace per run, readable with `stageload summary`.
 - `summary.json`, `table.md`: written by `bench/summarize_runs.py`.
-- `compare-*.json`: fingerprint comparisons.
+- `compare-*.json`, `cpu-build/compare-*.json`: fingerprint comparisons.
+- `stages.svg`, `stages.png`: written by `bench/plot_stages.py`.
 - `memory.svg`, `memory.png`: written by `bench/plot_trace.py`.
 - `runs.json`: the runs and how each ended.
