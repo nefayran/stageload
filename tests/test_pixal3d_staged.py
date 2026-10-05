@@ -99,7 +99,10 @@ def test_a_pipeline_without_a_planned_model_is_a_port_error(fake_port, tmp_path,
 
 
 
-def test_models_are_built_on_the_cpu_like_the_port_builds_them():
+
+def test_models_are_built_on_the_target_device_and_fall_back_to_the_cpu():
+    import warnings
+
     import torch
 
     from stageload.pixal3d.staged import _model_loader
@@ -112,6 +115,15 @@ def test_models_are_built_on_the_cpu_like_the_port_builds_them():
         return torch.nn.Linear(2, 2)
 
     module = _model_loader(build, "ckpts/flow_512", device)()
-    assert seen == ["cpu"]
+    assert seen == [device]
+    assert module.weight.device.type == device and not module.training
+
+    def build_cpu_only(path):
+        if torch.empty(0).device.type != "cpu":
+            raise RuntimeError("this constructor only runs on the CPU")
+        return torch.nn.Linear(2, 2)
+
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        module = _model_loader(build_cpu_only, "ckpts/odd", device)()
     assert module.weight.device.type == device
-    assert not module.training

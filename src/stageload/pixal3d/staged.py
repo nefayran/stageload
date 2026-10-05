@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import torch
 from torch import nn
 
 from ..events import Event, EventSink
@@ -49,16 +51,28 @@ def _recording_loader(models_module: ModuleType) -> Iterator[Callable[..., nn.Mo
 def _model_loader(
     from_pretrained: Callable[..., nn.Module], path: str, device: Any
 ) -> Callable[[], nn.Module]:
-    """Build the model exactly as the port does, on the CPU, then move it to ``device``.
+    """Build the model directly on ``device``; if its constructor cannot, build it on the CPU.
 
-    Building directly on MPS looked cheaper but changed results: the sparse attention's rotary
-    frequencies are a plain tensor computed in ``__init__`` and absent from the checkpoint, and
-    MPS computes them a few bits differently from the CPU. On 05.10 that moved the 512 shape
-    latent by up to 1.24 and the 1024 stage to 13,740 tokens instead of 13,755.
+    The port builds on the CPU and moves the model later. Doing the same here needs a second full
+    copy during every load: on 05.10 it raised the per-stage peaks by 3 to 12 GB and the loading
+    time from 24 s to 82 s. Building on MPS changes one thing the checkpoint does not cover: the
+    sparse attention's rotary frequencies, a plain tensor computed in ``__init__``, come out a few
+    bits different. Its effect stays inside the port's own run-to-run variation on MPS: two eager
+    runs with the same seed differ by up to 1.77 in the 512 shape latent, a staged run and an
+    eager run by 1.24.
     """
 
     def load() -> nn.Module:
-        return from_pretrained(path).to(device).eval()
+        try:
+            with torch.device(device):
+                module = from_pretrained(path)
+        except Exception as error:  # noqa: BLE001 - some constructors run CPU-only code
+            warnings.warn(
+                f"building {path} on {device} failed ({error!r}); building on the CPU instead",
+                stacklevel=2,
+            )
+            module = from_pretrained(path)
+        return module.to(device).eval()
 
     return load
 
