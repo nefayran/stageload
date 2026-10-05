@@ -96,3 +96,22 @@ def test_a_pipeline_without_a_planned_model_is_a_port_error(fake_port, tmp_path,
     monkeypatch.delitem(pipelines.MODELS, "tex_slat_decoder")
     with pytest.raises(PortError, match="tex_slat_decoder"):
         build_staged(fake_port, port_args(fake_port, tmp_path), "cpu")
+
+
+
+def test_models_are_built_on_the_cpu_like_the_port_builds_them():
+    import torch
+
+    from stageload.pixal3d.staged import _model_loader
+
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    seen = []
+
+    def build(path):
+        seen.append(torch.empty(0).device.type)
+        return torch.nn.Linear(2, 2)
+
+    module = _model_loader(build, "ckpts/flow_512", device)()
+    assert seen == ["cpu"]
+    assert module.weight.device.type == device
+    assert not module.training
