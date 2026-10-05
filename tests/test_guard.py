@@ -4,6 +4,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from stageload.guard import (
     EXIT_CANNOT_START,
     EXIT_KILLED,
@@ -181,21 +183,110 @@ def _wait_for_file(path, timeout=15.0):
     raise AssertionError(f"{path} was never written")
 
 
+GUARD = """
+import signal, sys
+from stageload.guard import GuardConfig, GuardIO, run_guarded
+{before}
+io = GuardIO(level=lambda: {level}, swap_used=lambda: 0, processes=lambda: [],
+             log=lambda line: print(line, file=sys.stderr, flush=True))
+sys.exit(run_guarded([sys.executable, "-c", {child!r}], GuardConfig({config}), io))
+"""
+
+
+def _start_guard(child, *, config="poll=0.1, grace=1.0", level=90, before=""):
+    """A guard in its own process, as the command line runs it, with fake memory readings."""
+    code = GUARD.format(child=child, config=config, level=level, before=before)
+    return subprocess.Popen([sys.executable, "-c", code], stderr=subprocess.PIPE, text=True)
+
+
+def _child(pidfile, *, ignore_term=False):
+    ignore = "signal.signal(signal.SIGTERM, signal.SIG_IGN); " if ignore_term else ""
+    return (f"import os, pathlib, signal, time; {ignore}"
+            f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(60)")
+
+
 def test_a_terminated_guard_stops_its_command_first(tmp_path):
     pidfile = tmp_path / "child.pid"
-    child = ("import os, pathlib, time; "
-             f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(60)")
-    guard = f"""
-import sys
-from stageload.guard import GuardConfig, GuardIO, run_guarded
-io = GuardIO(level=lambda: 90, swap_used=lambda: 0, processes=lambda: [], log=lambda line: None)
-sys.exit(run_guarded([sys.executable, "-c", {child!r}], GuardConfig(poll=0.1, grace=1.0), io))
-"""
-    proc = subprocess.Popen([sys.executable, "-c", guard])
+    proc = _start_guard(_child(pidfile))
     child_pid = _wait_for_file(pidfile)
     proc.send_signal(signal.SIGTERM)
     assert proc.wait(timeout=15) == 128 + signal.SIGTERM
     assert _gone(child_pid)
+    assert "Traceback" not in proc.stderr.read()
+
+
+def test_a_second_signal_while_stopping_kills_the_group_at_once(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    proc = _start_guard(_child(pidfile, ignore_term=True), config="poll=0.1, grace=30.0")
+    child_pid = _wait_for_file(pidfile)
+    proc.send_signal(signal.SIGTERM)
+    time.sleep(0.5)
+    sent = time.monotonic()
+    proc.send_signal(signal.SIGINT)
+    assert proc.wait(timeout=15) == 128 + signal.SIGTERM
+    assert time.monotonic() - sent < 5
+    assert _gone(child_pid)
+    assert "Traceback" not in proc.stderr.read()
+
+
+def test_a_signal_the_guard_was_started_to_ignore_stays_ignored(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    proc = _start_guard(_child(pidfile), before="signal.signal(signal.SIGHUP, signal.SIG_IGN)")
+    child_pid = _wait_for_file(pidfile)
+    proc.send_signal(signal.SIGHUP)
+    time.sleep(1.0)
+    assert proc.poll() is None
+    assert not _gone(child_pid, timeout=0.1)
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=15) == 128 + signal.SIGTERM
+    assert _gone(child_pid)
+
+
+def test_a_signal_while_waiting_for_room_ends_the_wait(tmp_path):
+    marker = tmp_path / "ran"
+    child = f"import pathlib; pathlib.Path({str(marker)!r}).write_text('1')"
+    proc = _start_guard(child, config="poll=5.0, grace=1.0, start_timeout=600", level=10)
+    assert "waiting" in proc.stderr.readline()
+    sent = time.monotonic()
+    proc.send_signal(signal.SIGINT)
+    assert proc.wait(timeout=15) == 128 + signal.SIGINT
+    assert time.monotonic() - sent < 3
+    assert not marker.exists()
+    assert "Traceback" not in proc.stderr.read()
+
+
+def test_when_the_guard_fails_it_stops_the_command_first(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    calls = {"n": 0}
+
+    def level():
+        calls["n"] += 1
+        if calls["n"] > 1 and pidfile.exists():
+            raise OSError("sysctl failed")
+        return 90
+
+    io = GuardIO(level=level, swap_used=lambda: 0, processes=lambda: [], log=lambda line: None)
+    with pytest.raises(OSError, match="sysctl failed"):
+        run_guarded([sys.executable, "-c", _child(pidfile)], GuardConfig(**QUICK), io)
+    assert _gone(int(pidfile.read_text()))
+
+
+def test_the_grace_period_covers_the_whole_group(tmp_path):
+    pidfile, cleaned = tmp_path / "worker.pid", tmp_path / "cleaned"
+    worker = ("import os, pathlib, signal, sys, time\n"
+              "def stop(signum, frame):\n"
+              "    time.sleep(0.5)\n"
+              f"    pathlib.Path({str(cleaned)!r}).write_text('1')\n"
+              "    sys.exit(0)\n"
+              "signal.signal(signal.SIGTERM, stop)\n"
+              f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
+              "time.sleep(60)\n")
+    leader = ("import subprocess, sys, time; "
+              f"subprocess.Popen([sys.executable, '-c', {worker!r}]); time.sleep(60)")
+    proc = subprocess.Popen([sys.executable, "-c", leader], start_new_session=True)
+    _wait_for_file(pidfile)
+    _stop_group(proc, grace=5.0)
+    assert cleaned.exists()
 
 
 def test_stopping_a_group_also_kills_members_that_outlive_the_leader(tmp_path):

@@ -1,13 +1,15 @@
 """Start one heavy command only when there is room, and stop it before it takes the machine down.
 
 Unlike a system-wide OOM killer, the guard needs no root, and the only processes it ever stops
-are the command it started and that command's process group. If the guard itself is stopped
-with SIGINT, SIGTERM or SIGHUP, it stops the command first; SIGKILL cannot be caught, and a
-command whose guard was killed that way keeps running.
+are the command it started and that command's process group. If the guard itself gets SIGINT,
+SIGTERM or SIGHUP, it stops the command first, unless it was started to ignore that signal (as
+``nohup`` does for SIGHUP). SIGKILL cannot be caught: a command whose guard was killed that way
+keeps running.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import signal
@@ -19,6 +21,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import FrameType
+from typing import Any
 
 EXIT_KILLED = 3
 EXIT_NO_ROOM = 4
@@ -132,12 +135,55 @@ def _no_room_reasons(
     return reasons
 
 
-def wait_for_room(config: GuardConfig, io: GuardIO) -> bool:
+class _Signals:
+    """While installed, SIGINT, SIGTERM and SIGHUP are recorded instead of acting at once, so the
+    guard can stop its command whatever it was doing when one arrived. A signal the guard was
+    started to ignore stays ignored. Handlers can only be installed from the main thread."""
+
+    HANDLED = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+    def __init__(self) -> None:
+        self.first: int | None = None
+        self.count = 0
+        self._previous: dict[int, Any] = {}
+
+    def __enter__(self) -> _Signals:
+        if threading.current_thread() is threading.main_thread():
+            for signum in self.HANDLED:
+                if signal.getsignal(signum) is not signal.SIG_IGN:
+                    self._previous[signum] = signal.signal(signum, self._record)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        for signum, handler in self._previous.items():
+            signal.signal(signum, handler)
+
+    def _record(self, signum: int, frame: FrameType | None) -> None:
+        if self.first is None:
+            self.first = signum
+        self.count += 1
+
+
+_SLICE = 0.2  # seconds: how long the guard can take to notice a signal
+
+
+def _nap(io: GuardIO, seconds: float, signals: _Signals | None) -> None:
+    slices = max(1, math.ceil(seconds / _SLICE))
+    for _ in range(slices):
+        if signals is not None and signals.count:
+            return
+        io.sleep(seconds / slices)
+
+
+def wait_for_room(config: GuardConfig, io: GuardIO, signals: _Signals | None = None) -> bool:
+    """True once there is room; False after ``start_timeout``, or as soon as a signal arrives."""
     regexes = [re.compile(pattern) for pattern in config.busy]
     deadline = io.clock() + config.start_timeout
     last = ""
     quiet: dict[str, float | None] = {"since": None}
     while True:
+        if signals is not None and signals.count:
+            return False
         reasons = _no_room_reasons(config, io, regexes, quiet)
         if not reasons:
             return True
@@ -149,24 +195,61 @@ def wait_for_room(config: GuardConfig, io: GuardIO) -> bool:
         if io.clock() >= deadline:
             io.log(f"guard: no room after {config.start_timeout:.0f} s ({reason})")
             return False
-        io.sleep(config.poll)
+        _nap(io, config.poll, signals)
 
 
-def _stop_group(proc: subprocess.Popen[bytes], grace: float) -> None:
-    """SIGTERM to the command's group, then SIGKILL to whatever is left of it after ``grace``."""
+def _group_alive(pgid: int) -> bool:
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(pgid, 0)
     except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _stop_group(
+    proc: subprocess.Popen[bytes], grace: float, signals: _Signals | None = None
+) -> None:
+    """SIGTERM to the command's group, then SIGKILL to whatever is left of it once ``grace``
+    seconds have passed, or at once if the guard gets another signal meanwhile.
+
+    The grace is for the whole group: a shell that exits at once does not cut short the cleanup
+    of the job it started.
+    """
+    pgid = proc.pid
+    seen = signals.count if signals is not None else 0
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        proc.wait()
         return
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        proc.poll()  # reap the leader, or it stays in the group as a zombie
+        if not _group_alive(pgid):
+            break
+        if signals is not None and signals.count > seen:
+            break
+        time.sleep(0.05)
     try:
-        proc.wait(timeout=grace)
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         pass
     proc.wait()
+
+
+def _wait(proc: subprocess.Popen[bytes], seconds: float, signals: _Signals) -> int | None:
+    """The command's exit code if it ends within ``seconds``; None if it is still running or a
+    signal arrived."""
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        try:
+            return proc.wait(timeout=max(0.0, min(_SLICE, remaining)))
+        except subprocess.TimeoutExpired:
+            if signals.count or remaining <= _SLICE:
+                return None
 
 
 def _exit_code(code: int) -> int:
@@ -174,67 +257,72 @@ def _exit_code(code: int) -> int:
     return 128 - code if code < 0 else code
 
 
-class _Signalled(BaseException):
-    def __init__(self, signum: int) -> None:
-        super().__init__(signum)
-        self.signum = signum
-
-
-def _raise_signalled(signum: int, frame: FrameType | None) -> None:
-    raise _Signalled(signum)
+def _signal_name(signum: int) -> str:
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return f"signal {signum}"
 
 
 def run_guarded(cmd: Sequence[str], config: GuardConfig, io: GuardIO | None = None) -> int:
     io = io or system_io()
-    if not wait_for_room(config, io):
-        return EXIT_NO_ROOM
-    swap_at_start = io.swap_used()
-    limit = swap_at_start + config.swap_budget
-    if config.swap_limit is not None:
-        limit = min(limit, config.swap_limit)
-    io.log(
-        f"guard: start, swap {_gb(swap_at_start)}, stop above {_gb(limit)} "
-        f"or under {config.kill_free}% available twice"
-    )
-    handled = (signal.SIGTERM, signal.SIGHUP)
-    previous = {}
-    if threading.current_thread() is threading.main_thread():
-        previous = {signum: signal.signal(signum, _raise_signalled) for signum in handled}
-    try:
+    with _Signals() as signals:
+        room = wait_for_room(config, io, signals)
+        if signals.first is not None:
+            io.log(f"guard: got {_signal_name(signals.first)} before starting the command")
+            return 128 + signals.first
+        if not room:
+            return EXIT_NO_ROOM
+        swap_at_start = io.swap_used()
+        limit = swap_at_start + config.swap_budget
+        if config.swap_limit is not None:
+            limit = min(limit, config.swap_limit)
+        io.log(
+            f"guard: start, swap {_gb(swap_at_start)}, stop above {_gb(limit)} "
+            f"or under {config.kill_free}% available twice"
+        )
         try:
             proc = subprocess.Popen(list(cmd), start_new_session=True)
         except OSError as error:
             io.log(f"guard: cannot start {cmd[0]!r}: {error.strerror or error}")
             return EXIT_CANNOT_START
-        low = 0
         try:
-            while True:
-                try:
-                    code = proc.wait(timeout=config.poll)
-                except subprocess.TimeoutExpired:
-                    code = None
-                if code is not None:
-                    io.log(f"guard: exit {_exit_code(code)}")
-                    return _exit_code(code)
-                level = io.level()
-                swap = io.swap_used()
-                low = low + 1 if level < config.kill_free else 0
-                if swap > limit or low >= 2:
-                    if swap > limit:
-                        why = f"swap {_gb(swap)} > {_gb(limit)}"
-                    else:
-                        why = f"memory available {level}% < {config.kill_free}% twice"
-                    io.log(f"guard: killing pid {proc.pid} and its group ({why})")
-                    _stop_group(proc, config.grace)
-                    return EXIT_KILLED
-        except KeyboardInterrupt:
-            io.log(f"guard: interrupted, stopping pid {proc.pid} and its group")
-            _stop_group(proc, config.grace)
-            return 128 + signal.SIGINT
-        except _Signalled as stopped:
-            io.log(f"guard: got signal {stopped.signum}, stopping pid {proc.pid} and its group")
-            _stop_group(proc, config.grace)
-            return 128 + stopped.signum
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
+            return _watch(proc, config, io, signals, limit)
+        except BaseException:
+            # the command cannot be watched any more, so it does not keep running unwatched
+            _stop_group(proc, config.grace, signals)
+            raise
+
+
+def _watch(
+    proc: subprocess.Popen[bytes],
+    config: GuardConfig,
+    io: GuardIO,
+    signals: _Signals,
+    limit: int,
+) -> int:
+    low = 0
+    while True:
+        if signals.first is not None:
+            io.log(
+                f"guard: got {_signal_name(signals.first)}, stopping pid {proc.pid} and its group"
+            )
+            _stop_group(proc, config.grace, signals)
+            return 128 + signals.first
+        code = _wait(proc, config.poll, signals)
+        if code is not None:
+            io.log(f"guard: exit {_exit_code(code)}")
+            return _exit_code(code)
+        if signals.first is not None:
+            continue
+        level = io.level()
+        swap = io.swap_used()
+        low = low + 1 if level < config.kill_free else 0
+        if swap > limit or low >= 2:
+            if swap > limit:
+                why = f"swap {_gb(swap)} > {_gb(limit)}"
+            else:
+                why = f"memory available {level}% < {config.kill_free}% twice"
+            io.log(f"guard: killing pid {proc.pid} and its group ({why})")
+            _stop_group(proc, config.grace, signals)
+            return EXIT_KILLED
