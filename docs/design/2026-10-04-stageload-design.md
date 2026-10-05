@@ -1,7 +1,8 @@
 # stageload: design
 
 Date: 2026-10-04
-Status: draft for review
+Status: implemented in 0.1.0 (2026-10-05). Where the code ended up different, [As built](#as-built)
+says how and why.
 
 ## Summary
 
@@ -181,7 +182,8 @@ the module-level names the adapter uses: `parse_args`, `load_runtime_deps`,
 so `check_pipeline_api` checks its methods (`from_pretrained`, `run`, `preprocess_image`,
 `get_proj_cond_ss`, `get_proj_cond_shape`, `decode_latent`) when the pipeline is built. A missing name stops the run with a
 message naming the tested commit (`0be9e69`). A different commit only prints a warning. The port is
-found from `--port DIR`, then `$PIXAL3D_MAC_DIR`, then `~/local-llm/Pixal3D-mac`.
+found from `--port DIR`, then `$PIXAL3D_MAC_DIR`, then the checkout whose `.venv` runs the command,
+then the current directory.
 
 ### Building the staged pipeline
 
@@ -345,3 +347,34 @@ The real Pixal3D run is checked by hand: one staged smoke run, then the bench.
   output comparison against the eager-against-eager noise.
 - The README explains the problem, how stageload works, how to install and run it, and its limits,
   using measured numbers only.
+
+## As built
+
+What changed between this design and 0.1.0, found while building and measuring it:
+
+- Loading a model saves and restores the random generators (torch's CPU, MPS and CUDA ones,
+  Python's `random`, NumPy's global one). The port seeds once and draws all of its noise from the
+  CPU generator, so a model built in the middle of a run would otherwise change every later stage.
+- Models are built directly on the device (`with torch.device("mps")`), falling back to the CPU
+  with a warning when a constructor cannot. Building them on the CPU, as the port does, cost 2.6
+  to 11.7 GB more in four stages and 82 s of loading instead of 24 s.
+- The guard has `--quiet-for`: with `--busy`, it starts only after no busy process has been seen
+  for that long (a minute by default). A chain of jobs leaves short gaps, and a run started in
+  one of them was stopped 20 s later when the next job took swap past the budget. The guard also
+  stops its command when it is itself terminated (SIGINT, SIGTERM, SIGHUP), exits with 127 when
+  the command cannot start and with 128 plus the signal number when a signal ended the command,
+  and leaves its own ancestors out of the `--busy` match.
+- `stageload-pixal3d` has `--stop-at STAGE` and `--fingerprint DIR`. On the 48 GB machine eager
+  loading does not get through the texture stage within the guard's limits, so the eager runs of
+  the bench stop where it begins, and their sampler outputs are compared with the staged runs'
+  stage by stage.
+- Staged loading refuses pipeline types other than `1024_cascade`, the one the stage plan
+  describes.
+- The only runtime dependency is torch. `--fingerprint` uses NumPy, which the port's environment
+  has.
+- The output comparison set its own limit: the sparse structure latent is the same bit for bit in
+  every run, but from the 512 shape stage on the port does not repeat itself on MPS with the same
+  seed, so staged and eager results can only be compared within that spread. The texture latent
+  and the GLB were not compared.
+- The MPS allocator does give released memory back: when decoding began, releasing the texture
+  model and emptying the cache brought the footprint from 30.1 GB down to between 2.8 and 8.0 GB.
