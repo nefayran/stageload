@@ -58,3 +58,24 @@ def test_system_counters_are_in_range():
 
     assert swap_used() >= 0
     assert 0 <= memorystatus_level() <= 100
+
+
+def test_a_failing_reader_is_noted_once_and_sampling_goes_on(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if 2 <= calls["n"] <= 6:
+            raise OSError("sysctl failed")
+        return calls["n"]
+
+    readers = Readers(footprint=flaky, swap_used=lambda: 5, level=lambda: 77)
+    with MemoryMeter(path, interval=0.01, readers=readers):
+        while calls["n"] < 10:
+            time.sleep(0.01)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    errors = [r for r in records if r["type"] == "error"]
+    assert [e["error"] for e in errors] == ["OSError: sysctl failed"]
+    assert sum(r["type"] == "sample" for r in records) >= 3
+    assert records[-1] == {"type": "end"}

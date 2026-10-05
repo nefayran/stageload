@@ -8,15 +8,28 @@ from typing import Any
 
 
 def read_trace(path: str | Path) -> list[dict[str, Any]]:
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    """Records of a trace file. A half-written last line, left by a killed run, is skipped."""
+    lines = [line for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    records = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            if number == len(lines):
+                break
+            raise
+    return records
 
 
 def _windows(stage_events: list[dict[str, Any]], end: float) -> list[tuple[str, float, float]]:
-    """Consecutive (stage, start, end) windows; the time before the first stage is ``setup``."""
+    """Consecutive (stage, start, end) windows; the time before the first stage is ``setup``.
+
+    Entering the stage the run is already in does not start a new window.
+    """
     starts = [(0.0, "setup")] + [(e["t"], e["stage"]) for e in stage_events]
-    if len(starts) > 1 and (starts[1][0] <= 0.0 or starts[1][1] == "setup"):
+    if len(starts) > 1 and starts[1][0] <= 0.0:
         starts = [(0.0, starts[1][1])] + starts[2:]
+    starts = [s for i, s in enumerate(starts) if i == 0 or s[1] != starts[i - 1][1]]
     windows = []
     for i, (t0, stage) in enumerate(starts):
         t1 = starts[i + 1][0] if i + 1 < len(starts) else end

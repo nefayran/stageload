@@ -1,4 +1,8 @@
-from stageload.trace import summarize
+import json
+
+import pytest
+
+from stageload.trace import read_trace, summarize
 
 
 def sample(t, footprint, swap=0, level=80):
@@ -64,3 +68,35 @@ def test_an_empty_trace_summarizes_to_zeros():
     s = summarize([])
     assert s["peak_footprint"] == 0
     assert s["stages"] == []
+
+
+def test_entering_the_current_stage_again_keeps_one_window():
+    records = [
+        sample(0.0, 10),
+        event(1.0, "stage", stage="texture"),
+        sample(1.5, 40),
+        event(2.0, "stage", stage="texture"),
+        sample(2.5, 60),
+        event(3.0, "stage", stage="decode"),
+        sample(3.5, 20),
+    ]
+    stages = summarize(records)["stages"]
+    assert [(s["stage"], s["seconds"], s["peak_footprint"]) for s in stages] == [
+        ("setup", 1.0, 10),
+        ("texture", 2.0, 60),
+        ("decode", 0.5, 20),
+    ]
+
+
+def test_a_half_written_last_line_is_skipped(tmp_path):
+    path = tmp_path / "killed.jsonl"
+    lines = [json.dumps(sample(0.0, 10)), json.dumps(sample(0.5, 20)), '{"type":"sam']
+    path.write_text("\n".join(lines))
+    assert [r["footprint"] for r in read_trace(path)] == [10, 20]
+
+
+def test_a_broken_line_inside_the_trace_is_an_error(tmp_path):
+    path = tmp_path / "broken.jsonl"
+    path.write_text('{"type":"sam\n' + json.dumps(sample(0.5, 20)) + "\n")
+    with pytest.raises(json.JSONDecodeError):
+        read_trace(path)

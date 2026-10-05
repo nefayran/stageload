@@ -146,6 +146,7 @@ class MemoryMeter:
         self._thread: threading.Thread | None = None
         self._file: TextIO | None = None
         self._t0 = time.monotonic()
+        self._last_error: str | None = None
 
     def __enter__(self) -> MemoryMeter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +154,12 @@ class MemoryMeter:
         self._t0 = time.monotonic()
         utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._write({"type": "start", "utc": utc, "interval": self.interval, **self.meta})
-        self.sample()
+        try:
+            self.sample()
+        except BaseException:
+            self._file.close()
+            self._file = None
+            raise
         self._thread = threading.Thread(target=self._run, name="stageload-meter", daemon=True)
         self._thread.start()
         return self
@@ -162,7 +168,7 @@ class MemoryMeter:
         self._stop.set()
         if self._thread is not None:
             self._thread.join()
-        self.sample()
+        self._sample_or_note()
         self._write({"type": "end"})
         if self._file is not None:
             self._file.close()
@@ -194,7 +200,18 @@ class MemoryMeter:
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval):
+            self._sample_or_note()
+
+    def _sample_or_note(self) -> None:
+        """A failed read is written to the trace, once per distinct error, and sampling goes on."""
+        try:
             self.sample()
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            if message != self._last_error:
+                self._last_error = message
+                t = round(time.monotonic() - self._t0, 3)
+                self._write({"type": "error", "t": t, "error": message})
 
     def _write(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, separators=(",", ":"))
