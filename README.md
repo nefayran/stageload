@@ -28,7 +28,7 @@ Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two run
 | setup | 20.4 GB | 2.9 GB |
 | camera | 23.2 GB | 6.7 GB |
 | structure | 22.2 GB | 10.9 GB |
-| shape_512 | 26.6 GB | 11.5 GB |
+| shape_512 | 26.6 GB | 11.4 to 11.5 GB |
 | shape_1024 | 30.5 GB | 13.1 GB |
 | texture | stopped by the guard at 44.2 GB (a run on 2026-10-04) | 30.1 GB |
 | decode | – | 17.9 to 18.4 GB |
@@ -107,12 +107,15 @@ It waits until `kern.memorystatus_level` is at least `--wait-free` percent and n
 a `--busy` pattern for `--quiet-for` (a minute by default, so the gap between two jobs of a chain
 does not count as quiet), then runs the command. It stops the command if swap grows more than
 `--swap-budget` over what was used at the start, or if available memory stays under `--kill-free`
-(10 %) for two samples.
+(10 %) for two samples. Stopping means SIGTERM to the command's process group and, five seconds
+later, SIGKILL to whatever of the group is left.
 
 Exit code 3 means the guard stopped the command, 4 that it never found room to start it, and 127
 that the command could not be started. If the guard itself gets Ctrl-C, SIGTERM or SIGHUP, it
-stops the command first and exits with 128 plus the signal number. Otherwise you get the command's
-own exit code, or 128 plus the signal number if a signal ended it.
+stops the command first and exits with 128 plus the signal number; a second signal while the
+command is shutting down sends SIGKILL at once. A signal the guard was started to ignore, such as
+SIGHUP under `nohup`, stays ignored. Otherwise you get the command's own exit code, or 128 plus
+the signal number if a signal ended it.
 
 The `--busy` patterns match whole command lines, like `pgrep -f`. The guard leaves itself and the
 shells that started it out, but any other process whose command line contains a pattern counts,
@@ -133,7 +136,7 @@ DEVICE = "mps"
 
 def loader(cls, path):             # cls: one of your nn.Module classes
     def load():
-        with torch.device(DEVICE):  # built on the GPU, with no second copy on the CPU
+        with torch.device(DEVICE):  # built on the GPU, not on the CPU and then moved
             model = cls()
         model.load_state_dict(load_file(path, device=DEVICE))
         return model.eval()

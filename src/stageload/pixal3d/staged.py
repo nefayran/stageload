@@ -53,9 +53,9 @@ def _model_loader(
     """Build the model directly on ``device``; if its constructor cannot, build it on the CPU.
 
     The port builds every model on the CPU and moves it later, which needs a second full copy
-    during each load. A staged run built that way on 2026-10-05 peaked 2.6 to 11.7 GB higher in
-    four of the five stages that load models (3.0 GB lower in the structure stage), and its loads
-    took 82 s instead of 24 s. Building on MPS changes one thing the checkpoint does not cover:
+    during each load. A staged run built that way on 2026-10-05 loaded for 82 s instead of 24 s;
+    its peaks were 2.6 to 3.8 GB higher in three of the five stages that load models and 1.2 to
+    3.0 GB lower in the other two. Building on MPS changes one thing the checkpoint does not cover:
     the sparse attention's rotary frequencies, a plain tensor computed in ``__init__``, come out
     slightly different (up to 6e-8 apart). Whether that changes the result cannot be told on MPS:
     from the 512 shape stage on, a staged run differs from an eager run by 1.24 to 1.86, and the

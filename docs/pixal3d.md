@@ -93,11 +93,12 @@ generators around each load (torch's CPU, MPS and CUDA ones, Python's `random` a
 one), so a staged run draws the noise an eager run draws.
 
 One thing does differ. The port builds its models on the CPU and moves them to MPS; stageload
-builds them on MPS, which avoids a second copy during every load. A tensor a model computes when
-it is built, rather than reads from its checkpoint, can then come out slightly different: the
-sparse attention's rotary frequencies differ by up to 6e-8. Building on the CPU instead cost 2.6
-to 11.7 GB more in four stages and more than tripled the loading time, without bringing the
-results measurably closer ([bench/results/2026-10-05](../bench/results/2026-10-05/README.md)).
+builds them on MPS, so a load needs no second copy. A tensor a model computes when it is built,
+rather than reads from its checkpoint, can then come out slightly different: the sparse
+attention's rotary frequencies differ by up to 6e-8. A run that built on the CPU instead had
+peaks 2.6 to 3.8 GB higher in three stages and 1.2 to 3.0 GB lower in two, and loaded for 82 s
+instead of 24 s. Its 512 shape latent differed from the two eager runs by 1.84 and 1.12, the same
+order as any two runs differ ([bench/results/2026-10-05](../bench/results/2026-10-05/README.md)).
 
 `--fingerprint DIR` hashes the output of every sampler call (sparse structure, the low- and
 high-resolution shape latents, the texture latent) and saves a copy, and

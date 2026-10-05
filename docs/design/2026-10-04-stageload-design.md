@@ -356,8 +356,9 @@ What changed between this design and 0.1.0, found while building and measuring i
   Python's `random`, NumPy's global one). The port seeds once and draws all of its noise from the
   CPU generator, so a model built in the middle of a run would otherwise change every later stage.
 - Models are built directly on the device (`with torch.device("mps")`), falling back to the CPU
-  with a warning when a constructor cannot. Building them on the CPU, as the port does, cost 2.6
-  to 11.7 GB more in four stages and 82 s of loading instead of 24 s.
+  with a warning when a constructor cannot. Building them on the CPU, as the port does, raised
+  three stages' peaks by 2.6 to 3.8 GB, lowered two by 1.2 to 3.0 GB, and took 82 s of loading
+  instead of 24 s.
 - The guard has `--quiet-for`: with `--busy`, it starts only after no busy process has been seen
   for that long (a minute by default). A chain of jobs leaves short gaps, and a run started in
   one of them was stopped 20 s later when the next job took swap past the budget. The guard also
@@ -377,4 +378,7 @@ What changed between this design and 0.1.0, found while building and measuring i
   seed, so staged and eager results can only be compared within that spread. The texture latent
   and the GLB were not compared.
 - The MPS allocator does give released memory back: when decoding began, releasing the texture
-  model and emptying the cache brought the footprint from 30.1 GB down to between 2.8 and 8.0 GB.
+  model and emptying the cache brought the footprint from 30.1 GB down to 4.5 GB in one bench run
+  and 8.0 GB in the other.
+- A stage's window in the trace summary begins once the releases that entering it set off have
+  finished, so memory that is still being freed counts towards the stage it belonged to.

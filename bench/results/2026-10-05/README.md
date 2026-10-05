@@ -16,6 +16,10 @@
   [A full eager run](#a-full-eager-run).
 - GB means 2^30 bytes. Footprint is the process's `phys_footprint`, the number Activity Monitor
   shows, which includes memory macOS has compressed.
+- A stage's window begins once the releases that entering it set off have finished; until then
+  the memory still belongs to the stage before. Without that rule one sample, taken 0.4 s into
+  the decode stage of the CPU-build run while the texture model was still being released, would
+  have put that run's decode peak at 29.5 GB instead of 16.7.
 
 ## Memory
 
@@ -88,11 +92,12 @@ the texture stage on this machine.
 ## Building on the CPU (experiment)
 
 The second staged run, in [`cpu-build/`](cpu-build), built every model on the CPU and then moved
-it to MPS, the way the port builds them. Its peaks were higher in four of the five stages that
-load models, by 2.6 to 11.7 GB (shape_512 14.1 GB, shape_1024 16.0, texture 33.9, decode 29.5),
-and 3.0 GB lower in the structure stage (7.9 GB); loading took 82 s instead of 24 s. Its 512
-shape latent differs from the two eager runs by 1.84 and 1.12, inside the range above.
-stageload builds each model directly on the device.
+it to MPS, the way the port builds them. Its peaks were higher in three of the five stages that
+load models, by 2.6 to 3.8 GB (shape_512 14.1 GB, shape_1024 16.0, texture 33.9), and lower in
+the other two: structure 7.9 GB (3.0 lower) and decode 16.7 GB (1.2 to 1.7 lower). Loading took
+82 s instead of 24 s. Its 512 shape latent differs from the two eager runs by 1.84 and 1.12; the
+staged runs built on the device differ from them by 1.24 to 1.86. stageload builds each model
+directly on the device.
 
 ## Another image
 
