@@ -21,8 +21,9 @@ def collect(results: Path) -> dict[str, Any]:
         entry = modes.setdefault(
             mode,
             {"peak_footprint_gb": [], "swap_rise_gb": [], "seconds": [], "load_seconds": [],
-             "stages": []},
+             "stopped_at": [], "stages": []},
         )
+        entry["stopped_at"].append(s["meta"].get("stop_at"))
         entry["peak_footprint_gb"].append(round(s["peak_footprint"] / GB, 2))
         entry["swap_rise_gb"].append(round((s["swap"]["peak"] - s["swap"]["start"]) / GB, 2))
         entry["seconds"].append(round(s["duration"], 1))
@@ -42,18 +43,38 @@ def collect(results: Path) -> dict[str, Any]:
 
 def table(summary: dict[str, Any]) -> str:
     rows = [
-        "| mode | runs | peak footprint (GB) | swap rise (GB) | time (s) | of which loading (s) |",
-        "|---|---|---|---|---|---|",
+        "| mode | runs | ran to | peak footprint (GB) | swap rise (GB) | time (s) "
+        "| of which loading (s) |",
+        "|---|---|---|---|---|---|---|",
     ]
     for mode, entry in summary["modes"].items():
 
         def cell(key: str, entry: dict[str, list[Any]] = entry) -> str:
             return " / ".join(str(v) for v in entry[key])
 
+        ran_to = " / ".join(f"{stop} (stopped)" if stop else "end" for stop in entry["stopped_at"])
         rows.append(
-            f"| {mode} | {len(entry['seconds'])} | {cell('peak_footprint_gb')} | "
+            f"| {mode} | {len(entry['seconds'])} | {ran_to} | {cell('peak_footprint_gb')} | "
             f"{cell('swap_rise_gb')} | {cell('seconds')} | {cell('load_seconds')} |"
         )
+    return "\n".join(rows) + "\n"
+
+
+def stage_table(summary: dict[str, Any]) -> str:
+    """Peak footprint per stage, one column per mode, the runs of a mode separated by '/'."""
+    modes = list(summary["modes"])
+    order: list[str] = []
+    for mode in modes:
+        for stages in summary["modes"][mode]["stages"]:
+            order += [stage for stage in stages if stage not in order]
+    rows = ["| stage | " + " | ".join(f"{m} (GB)" for m in modes) + " |",
+            "|---|" + "---|" * len(modes)]
+    for stage in order:
+        cells = []
+        for mode in modes:
+            values = [runs.get(stage) for runs in summary["modes"][mode]["stages"]]
+            cells.append(" / ".join("–" if v is None else str(v) for v in values))
+        rows.append(f"| {stage} | " + " | ".join(cells) + " |")
     return "\n".join(rows) + "\n"
 
 
@@ -63,8 +84,9 @@ def main() -> None:
     args = parser.parse_args()
     summary = collect(args.results)
     (args.results / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    (args.results / "table.md").write_text(table(summary))
-    print(table(summary))
+    text = table(summary) + "\n" + stage_table(summary)
+    (args.results / "table.md").write_text(text)
+    print(text)
 
 
 if __name__ == "__main__":

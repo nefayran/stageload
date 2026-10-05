@@ -70,6 +70,12 @@ def test_collect_and_table_report_each_mode(tmp_path):
     text = table(summary)
     assert "| eager |" in text and "| staged |" in text
 
+    from bench.summarize_runs import stage_table
+
+    stages = stage_table(summary)
+    assert "| stage | eager (GB) | staged (GB) |" in stages
+    assert "| structure | 30.0 | 12.0 |" in stages
+
 
 def write_fingerprints(directory, feats):
     import hashlib
