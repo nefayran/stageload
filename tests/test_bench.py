@@ -69,3 +69,30 @@ def test_collect_and_table_report_each_mode(tmp_path):
     assert summary["modes"]["staged"]["peak_footprint_gb"] == [12.0]
     text = table(summary)
     assert "| eager |" in text and "| staged |" in text
+
+
+def write_fingerprints(directory, feats):
+    import hashlib
+
+    import torch
+
+    directory.mkdir(parents=True)
+    tensor = torch.tensor(feats, dtype=torch.float32)
+    sha = hashlib.sha256(tensor.numpy().tobytes()).hexdigest()
+    record = {"call": "shape_slat_sampler#1",
+              "tensors": [{"name": "feats", "shape": [len(feats)], "dtype": "float32",
+                           "sha256": sha}]}
+    (directory / "fingerprints.json").write_text(json.dumps([record]))
+    torch.save({"feats": tensor}, directory / "shape_slat_sampler#1.pt")
+    return directory
+
+
+def test_fingerprints_report_equal_calls_and_the_size_of_a_difference(tmp_path):
+    from bench.compare_fingerprints import compare as compare_fp
+
+    a = write_fingerprints(tmp_path / "a", [1.0, 2.0, 3.0])
+    b = write_fingerprints(tmp_path / "b", [1.0, 2.0, 3.0])
+    c = write_fingerprints(tmp_path / "c", [1.0, 2.5, 3.0])
+    assert compare_fp(a, b) == [{"call": "shape_slat_sampler#1", "tensor": "feats", "equal": True,
+                                 "shape": [3], "max_abs_diff": 0.0}]
+    assert compare_fp(a, c)[0]["max_abs_diff"] == 0.5

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .. import __version__
+from .plan import STAGES
 from .port import PortError, diagnostic_switches, find_port, load_port
 
 REFUSED_FLAGS = ("--flash-sdpa", "--load-mesh", "--load-fixture-07", "--free-spent-models")
@@ -27,6 +28,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--texture-size", type=int, default=2048)
     parser.add_argument("--trace", default=None, help="trace file (default: next to the output)")
+    parser.add_argument("--stop-at", default=None, metavar="STAGE",
+                        help="end the run where this stage would begin (no GLB)")
+    parser.add_argument("--fingerprint", default=None, metavar="DIR",
+                        help="save a hash and a copy of every sampler's output here")
     return parser
 
 
@@ -43,6 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     refused = [flag for flag in extra if flag.split("=", 1)[0] in REFUSED_FLAGS]
     if refused:
         return _fail(f"{', '.join(refused)} is not supported here; run generate_mps.py for it")
+    if a.stop_at is not None and a.stop_at not in STAGES:
+        return _fail(f"--stop-at must be one of {', '.join(STAGES)}")
     if a.load == "staged":
         switches = diagnostic_switches()
         if switches:
@@ -77,13 +84,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "port_dirty": port.dirty,
         "stageload": __version__,
         "torch": torch.__version__,
+        "stop_at": a.stop_at,
     }
     image = Image.open(a.image)
     with MemoryMeter(trace, meta=meta) as meter:
-        glb = generate(port, args, image, device, mode=a.load, sink=meter)
+        glb = generate(port, args, image, device, mode=a.load, sink=meter, stop_at=a.stop_at,
+                       fingerprint_dir=a.fingerprint)
     summary = meter.summary()
+    result = glb.name if glb is not None else f"stopped at {a.stop_at} as asked"
     print(
-        f"stageload-pixal3d: {glb.name} | {a.load} | peak footprint "
+        f"stageload-pixal3d: {result} | {a.load} | peak footprint "
         f"{summary['peak_footprint'] / 2**30:.1f} GB | {summary['duration']:.0f} s | "
         f"trace {trace.name}"
     )

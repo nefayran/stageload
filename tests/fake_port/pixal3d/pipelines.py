@@ -1,4 +1,9 @@
-"""Fake Pixal3D pipeline: the real method names, called in the real order."""
+"""Fake Pixal3D pipeline: the real method names, called in the real order, with seeded noise.
+
+As in the real pipeline, run() seeds once and every stage draws its noise from the CPU generator
+(`torch.randn(...).to(device)`), so anything that advances that generator mid-run changes the
+result.
+"""
 
 import torch
 from torch import nn
@@ -14,6 +19,22 @@ MODELS = {
     "tex_slat_flow_model_1024": "ckpts/tex_flow",
     "tex_slat_decoder": "ckpts/tex_dec",
 }
+
+
+class FakeSlat:
+    """Like SparseTensor: coordinates and features."""
+
+    def __init__(self, coords, feats):
+        self.coords = coords
+        self.feats = feats
+
+    def replace(self, feats):
+        return FakeSlat(self.coords, feats)
+
+
+class FakeSampler:
+    def sample(self, model, noise, cond=None, **kwargs):
+        return {"samples": model(noise)}
 
 
 class FakeBiRefNet:
@@ -44,6 +65,9 @@ class Pixal3DImageTo3DPipeline:
         self.image_cond_model_shape_1024 = None
         self.image_cond_model_tex_1024 = None
         self.rembg_model = None
+        self.sparse_structure_sampler = None
+        self.shape_slat_sampler = None
+        self.tex_slat_sampler = None
         self.low_vram = True
         self._device = "cpu"
 
@@ -52,6 +76,9 @@ class Pixal3DImageTo3DPipeline:
         loaded = {name: models.from_pretrained(f"{path}/{ckpt}") for name, ckpt in MODELS.items()}
         pipeline = cls(loaded)
         pipeline.rembg_model = FakeBiRefNet()
+        pipeline.sparse_structure_sampler = FakeSampler()
+        pipeline.shape_slat_sampler = FakeSampler()
+        pipeline.tex_slat_sampler = FakeSampler()
         return pipeline
 
     @property
@@ -84,39 +111,54 @@ class Pixal3DImageTo3DPipeline:
             model.cpu()
         return out
 
-    def sample_sparse_structure(self, cond):
-        self._use("sparse_structure_flow_model")
-        self._use("sparse_structure_decoder")
-        return "coords"
-
-    def sample_shape_slat(self, cond, flow_model):
+    def _sample(self, sampler, flow_model, noise, cond):
         if self.low_vram:
             flow_model.to(self.device)
-        flow_model()
+        out = sampler.sample(flow_model, noise, cond)["samples"]
         if self.low_vram:
             flow_model.cpu()
-        return "slat"
+        return out
+
+    def sample_sparse_structure(self, cond, resolution=64, num_samples=1, sampler_params={}):
+        noise = torch.randn(num_samples * 6, 8).to(self.device)
+        z = self._sample(self.sparse_structure_sampler,
+                         self.models["sparse_structure_flow_model"], noise, cond)
+        occupancy = self._use("sparse_structure_decoder", "forward", z)
+        return (occupancy > 0).nonzero().int()
+
+    def sample_shape_slat(self, cond, flow_model, coords, sampler_params={}):
+        noise = FakeSlat(coords, torch.randn(coords.shape[0], 8).to(self.device))
+        return self._sample(self.shape_slat_sampler, flow_model, noise, cond)
+
+    def sample_tex_slat(self, cond, flow_model, shape_slat, sampler_params={}):
+        noise = shape_slat.replace(
+            feats=torch.randn(shape_slat.coords.shape[0], 8).to(self.device))
+        return self._sample(self.tex_slat_sampler, flow_model, noise, cond)
 
     def decode_latent(self, shape_slat, tex_slat, resolution):
-        self._use("shape_slat_decoder")
-        self._use("tex_slat_decoder")
+        self._use("shape_slat_decoder", "forward", shape_slat)
+        self._use("tex_slat_decoder", "forward", tex_slat)
         return ["mesh"]
 
     def run(self, image, seed=42, preprocess_image=True, return_latent=False,
             pipeline_type="1024_cascade", **kwargs):
         assert "shape_slat_flow_model_512" in self.models
+        torch.manual_seed(seed)
         if preprocess_image:
             image = self.preprocess_image(image)
         cond_ss = self.get_proj_cond_ss(image)
-        coords = self.sample_sparse_structure(cond_ss)
+        coords = self.sample_sparse_structure(cond_ss, 64)
         cond_lr = self.get_proj_cond_shape(self.image_cond_model_shape_512, [image], coords)
-        lr_slat = self.sample_shape_slat(cond_lr, self.models["shape_slat_flow_model_512"])
+        lr_slat = self.sample_shape_slat(cond_lr, self.models["shape_slat_flow_model_512"], coords)
         hr_coords = self._use("shape_slat_decoder", "upsample", lr_slat)
         cond_hr = self.get_proj_cond_shape(self.image_cond_model_shape_1024, [image], hr_coords)
         flow_model_hr = self.models["shape_slat_flow_model_1024"]
-        assert flow_model_hr.in_channels == 8
-        shape_slat = self.sample_shape_slat(cond_hr, flow_model_hr)
-        cond_tex = self.get_proj_cond_shape(self.image_cond_model_tex_1024, [image], shape_slat)
-        tex_slat = self.sample_shape_slat(cond_tex, self.models["tex_slat_flow_model_1024"])
+        noise = FakeSlat(
+            hr_coords, torch.randn(hr_coords.shape[0], flow_model_hr.in_channels).to(self.device))
+        shape_slat = self._sample(self.shape_slat_sampler, flow_model_hr, noise, cond_hr)
+        cond_tex = self.get_proj_cond_shape(self.image_cond_model_tex_1024, [image],
+                                            shape_slat.coords)
+        tex_slat = self.sample_tex_slat(cond_tex, self.models["tex_slat_flow_model_1024"],
+                                        shape_slat)
         meshes = self.decode_latent(shape_slat, tex_slat, 1024)
         return (meshes, (shape_slat, tex_slat, 1024)) if return_latent else meshes

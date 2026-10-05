@@ -19,6 +19,7 @@ from ..release import release
 from ..share import share
 from .plan import EXTRACTORS, STAGES, install_stage_hooks
 from .port import Port, PortError, check_pipeline_api
+from .probe import Fingerprints, StopRun, stopping
 
 MODES = ("staged", "eager")
 
@@ -146,7 +147,12 @@ class StagedPipeline:
 
 
 def build_staged(
-    port: Port, args: Any, device: Any, sink: EventSink | None = None
+    port: Port,
+    args: Any,
+    device: Any,
+    sink: EventSink | None = None,
+    *,
+    install_hooks: bool = True,
 ) -> StagedPipeline:
     """The port's own pipeline object with lazy models, shared extractors and stage hooks."""
     check_pipeline_api(port)
@@ -180,37 +186,62 @@ def build_staged(
             sat_boost=float(getattr(args, "tex_sat_boost", 1.0)),
         )
     staged = StagedPipeline(pipeline, models, extractors, sink)
-    install_stage_hooks(pipeline, staged.enter_stage)
+    if install_hooks:
+        install_stage_hooks(pipeline, staged.enter_stage)
     return staged
 
 
 def generate(
-    port: Port, args: Any, image: Any, device: Any, *, mode: str, sink: EventSink | None = None
-) -> Path:
-    """One image to a GLB, the way the port's main() does it, with eager or staged loading."""
+    port: Port,
+    args: Any,
+    image: Any,
+    device: Any,
+    *,
+    mode: str,
+    sink: EventSink | None = None,
+    stop_at: str | None = None,
+    fingerprint_dir: str | Path | None = None,
+) -> Path | None:
+    """One image to a GLB, the way the port's main() does it, with eager or staged loading.
+
+    ``stop_at`` ends the run where that stage would begin and returns ``None``;
+    ``fingerprint_dir`` receives a hash and a copy of every sampler's output.
+    """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
+    if stop_at is not None and stop_at not in STAGES:
+        raise ValueError(f"stop_at must be one of {list(STAGES)}, not {stop_at!r}")
     glb_path = Path(port.gm.output_glb_path(args.output))
     glb_path.parent.mkdir(parents=True, exist_ok=True)
     staged: StagedPipeline | None = None
     if mode == "staged":
-        staged = build_staged(port, args, device, sink)
-        pipeline, on_stage = staged.pipeline, staged.enter_stage
+        staged = build_staged(port, args, device, sink, install_hooks=False)
+        pipeline, enter = staged.pipeline, staged.enter_stage
     else:
 
-        def on_stage(stage: str) -> None:
+        def enter(stage: str) -> None:
             if sink is not None:
                 sink.emit(Event("stage", stage=stage))
 
-        on_stage("setup")
+        enter("setup")
         pipeline = port.gm.load_pipeline(args, device)
-        install_stage_hooks(pipeline, on_stage)
-    asset = port.gm.image_to_asset(pipeline, image, args, device, tmp_dir=glb_path.parent)
-    if getattr(args, "save_mesh", None):
-        port.gm.save_mesh_checkpoint(
-            args.save_mesh, asset.mesh, asset.vertices, asset.faces, asset.resolution
-        )
-    on_stage("export")
+    on_stage = stopping(enter, stop_at)
+    install_stage_hooks(pipeline, on_stage)
+    if fingerprint_dir is not None:
+        Fingerprints(fingerprint_dir).install(pipeline)
+    try:
+        asset = port.gm.image_to_asset(pipeline, image, args, device, tmp_dir=glb_path.parent)
+        if getattr(args, "save_mesh", None):
+            port.gm.save_mesh_checkpoint(
+                args.save_mesh, asset.mesh, asset.vertices, asset.faces, asset.resolution
+            )
+        on_stage("export")
+    except StopRun as stop:
+        if sink is not None:
+            sink.emit(Event("mark", note=f"stopped at {stop.stage}"))
+        if staged is not None:
+            staged.close()
+        return None
     port.gm.asset_to_glb(asset, glb_path, args)
     if staged is not None:
         staged.close()

@@ -53,3 +53,21 @@ def test_a_missing_port_is_reported(tmp_path, capsys):
     code = main(["x.png", "-o", str(tmp_path / "o.glb"), "--port", str(tmp_path / "nowhere")])
     assert code == 2
     assert "Pixal3D-mac not found" in capsys.readouterr().err
+
+
+@macos
+def test_a_stopped_run_says_so_and_writes_no_glb(fake_port_dir, tmp_path, capsys):
+    out = tmp_path / "out.glb"
+    code = main([str(image_file(tmp_path)), "-o", str(out), "--port", str(fake_port_dir),
+                 "--load", "eager", "--stop-at", "texture", "--fingerprint", str(tmp_path / "fp")])
+    assert code == 0
+    assert not out.exists()
+    assert (tmp_path / "fp" / "fingerprints.json").exists()
+    assert "stopped at texture as asked" in capsys.readouterr().out
+
+
+def test_an_unknown_stop_stage_is_refused(fake_port_dir, tmp_path, capsys):
+    code = main([str(image_file(tmp_path)), "-o", str(tmp_path / "o.glb"), "--port",
+                 str(fake_port_dir), "--stop-at", "nowhere"])
+    assert code == 2
+    assert "--stop-at must be one of" in capsys.readouterr().err
