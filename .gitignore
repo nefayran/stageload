@@ -10,3 +10,4 @@ bench/smoke/
 *.draft.md
 bench/results/**/*.log
 bench/results/**/fp-*/
+.coverage
