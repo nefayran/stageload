@@ -11,6 +11,7 @@ from torch import nn
 
 from .events import Event, EventSink
 from .release import ReleasedModuleError, module_nbytes, release
+from .rng import preserved_rng
 
 Loader = Callable[[], nn.Module]
 
@@ -30,6 +31,10 @@ class StagedModels(MutableMapping[str, nn.Module]):
     every loaded model that the stage does not list and that is not pinned. Membership tests,
     ``len`` and iteration over names never load anything, and ``values()``/``items()`` only
     yield models that are loaded right now.
+
+    With ``preserve_rng`` (the default) a load leaves the CPU, MPS and CUDA random generators
+    where they were, so a model built in the middle of a seeded run does not change the noise the
+    run draws next.
     """
 
     def __init__(
@@ -39,7 +44,9 @@ class StagedModels(MutableMapping[str, nn.Module]):
         stages: Mapping[str, Iterable[str]],
         pinned: Iterable[str] = (),
         events: EventSink | None = None,
+        preserve_rng: bool = True,
     ) -> None:
+        self._preserve_rng = preserve_rng
         self._slots = {name: _Slot(loader) for name, loader in loaders.items()}
         self._stages = {stage: frozenset(names) for stage, names in stages.items()}
         unknown = sorted({n for names in self._stages.values() for n in names} - self._slots.keys())
@@ -60,7 +67,11 @@ class StagedModels(MutableMapping[str, nn.Module]):
             raise ReleasedModuleError(name, slot.released_at)
         kind = "reload" if slot.loads else "load"
         start = time.monotonic()
-        module = slot.loader()
+        if self._preserve_rng:
+            with preserved_rng():
+                module = slot.loader()
+        else:
+            module = slot.loader()
         seconds = time.monotonic() - start
         slot.module = module
         slot.loads += 1

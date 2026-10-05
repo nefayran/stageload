@@ -1,4 +1,5 @@
 import pytest
+import torch
 from torch import nn
 
 from stageload import ListSink, ReleasedModuleError, StagedModels
@@ -115,3 +116,28 @@ def test_unknown_stage_is_an_error():
     models, _, _ = make("a", {"one": ["a"]})
     with pytest.raises(KeyError, match="unknown stage"):
         models.enter("nope")
+
+
+def test_loading_a_model_does_not_change_the_random_numbers_that_follow():
+    torch.manual_seed(0)
+    expected = [torch.randn(3), torch.randn(3)]
+    models = StagedModels({"a": lambda: nn.Linear(64, 64)}, stages={"one": ["a"]})
+    torch.manual_seed(0)
+    first = torch.randn(3)
+    models["a"]
+    second = torch.randn(3)
+    assert torch.equal(first, expected[0])
+    assert torch.equal(second, expected[1])
+
+
+def test_random_state_can_be_left_alone_on_request():
+    models = StagedModels(
+        {"a": lambda: nn.Linear(64, 64)}, stages={"one": ["a"]}, preserve_rng=False
+    )
+    torch.manual_seed(0)
+    torch.randn(3)
+    models["a"]
+    after_load = torch.randn(3)
+    torch.manual_seed(0)
+    torch.randn(3)
+    assert not torch.equal(after_load, torch.randn(3))
