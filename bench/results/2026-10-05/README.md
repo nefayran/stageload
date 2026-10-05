@@ -50,8 +50,8 @@ straight segments in the chart, and the export peak may be higher than measured.
 ## A full eager run
 
 On 2026-10-04 an eager run with the same settings went into the texture stage. Within 10 s its
-footprint rose from 27 to 44.2 GB, available memory fell to 6 % and swap grew from 14.8 to
-27.0 GB, and the guard stopped it
+footprint rose from 27 to 44.2 GB and available memory fell to 6 %; swap, 14.8 GB when the run
+started, reached 27.0 GB, and the guard stopped it
 ([trace](full-eager-attempt/2026-10-04-eager.trace.jsonl), middle panel of the chart). Both staged
 runs went through the texture stage at 30.1 GB with at least 32 % of memory available.
 
