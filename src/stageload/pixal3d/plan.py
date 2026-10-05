@@ -19,6 +19,11 @@ STAGES: dict[str, tuple[str, ...]] = {
     "export": (),
 }
 
+# the plan follows the 1024 cascade; the 1536 cascade runs other models in other stages
+STAGED_PIPELINES = ("1024_cascade",)
+# where a run can be stopped: setup has begun before any hook is installed
+STOP_STAGES = tuple(stage for stage in STAGES if stage != "setup")
+
 # pipeline attribute -> (IMAGE_COND_CONFIGS key, the stage that calls this extractor)
 EXTRACTORS: dict[str, tuple[str, str]] = {
     "image_cond_model_ss": ("ss", "structure"),

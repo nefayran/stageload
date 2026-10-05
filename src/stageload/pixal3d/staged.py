@@ -7,7 +7,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import torch
@@ -17,7 +16,7 @@ from ..events import Event, EventSink
 from ..registry import StagedModels
 from ..release import release
 from ..share import share
-from .plan import EXTRACTORS, STAGES, install_stage_hooks
+from .plan import EXTRACTORS, STAGED_PIPELINES, STAGES, STOP_STAGES, install_stage_hooks
 from .port import Port, PortError, check_pipeline_api
 from .probe import Fingerprints, StopRun, stopping
 
@@ -33,7 +32,7 @@ class _Placeholder(nn.Module):
 
 
 @contextmanager
-def _recording_loader(models_module: ModuleType) -> Iterator[Callable[..., nn.Module]]:
+def _recording_loader(models_module: Any) -> Iterator[Callable[..., nn.Module]]:
     original = models_module.from_pretrained
 
     def record(path: str, **kwargs: Any) -> nn.Module:
@@ -53,13 +52,14 @@ def _model_loader(
 ) -> Callable[[], nn.Module]:
     """Build the model directly on ``device``; if its constructor cannot, build it on the CPU.
 
-    The port builds on the CPU and moves the model later. Doing the same here needs a second full
-    copy during every load: on 05.10 it raised the per-stage peaks by 3 to 12 GB and the loading
-    time from 24 s to 82 s. Building on MPS changes one thing the checkpoint does not cover: the
-    sparse attention's rotary frequencies, a plain tensor computed in ``__init__``, come out a few
-    bits different. Its effect stays inside the port's own run-to-run variation on MPS: two eager
-    runs with the same seed differ by up to 1.77 in the 512 shape latent, a staged run and an
-    eager run by 1.24.
+    The port builds every model on the CPU and moves it later, which needs a second full copy
+    during each load. A staged run built that way on 2026-10-05 peaked 2.6 to 11.7 GB higher in
+    four of the five stages that load models (3.0 GB lower in the structure stage), and its loads
+    took 82 s instead of 24 s. Building on MPS changes one thing the checkpoint does not cover:
+    the sparse attention's rotary frequencies, a plain tensor computed in ``__init__``, come out
+    slightly different (up to 6e-8 apart). Whether that changes the result cannot be told on MPS:
+    from the 512 shape stage on, a staged run differs from an eager run by 1.24 to 1.86, and the
+    one pair of eager runs with the same seed differed from each other by 1.77.
     """
 
     def load() -> nn.Module:
@@ -165,22 +165,42 @@ def build_staged(
     *,
     install_hooks: bool = True,
 ) -> StagedPipeline:
-    """The port's own pipeline object with lazy models, shared extractors and stage hooks."""
+    """The port's own pipeline object with lazy models, shared extractors and stage hooks.
+
+    It is what the port's ``load_pipeline(args, device)`` returns, with three differences:
+    ``models`` is a :class:`StagedModels`, ``low_vram`` is off because every model is built on
+    ``device``, and the four DINOv3 extractors share one backbone and one NAF upsampler.
+    """
+    pipeline_type = getattr(args, "pipeline_type", STAGED_PIPELINES[0])
+    if pipeline_type not in STAGED_PIPELINES:
+        raise ValueError(
+            f"staged loading has a plan for {', '.join(STAGED_PIPELINES)} only, "
+            f"not {pipeline_type!r}"
+        )
     check_pipeline_api(port)
+    recalib = getattr(args, "tex_recalib", False) or getattr(args, "tex_sat_boost", 1.0) != 1.0
+    if recalib and not hasattr(port.gm, "_install_tex_pbr_recalib"):
+        raise PortError(
+            "the port has no _install_tex_pbr_recalib() for --tex-recalib or --tex-sat-boost"
+        )
     with _recording_loader(port.models_module) as real_from_pretrained:
         pipeline = port.pipeline_cls.from_pretrained(args.model_path)
-    paths = {
-        name: getattr(module, "stageload_path", None) for name, module in pipeline.models.items()
-    }
+    loaders = {}
+    built = {}
+    for name, module in pipeline.models.items():
+        if isinstance(module, _Placeholder):
+            loaders[name] = _model_loader(real_from_pretrained, module.stageload_path, device)
+        else:
+            built[name] = module
     planned = {name for names in STAGES.values() for name in names}
-    missing = sorted(planned - {name for name, path in paths.items() if path})
+    missing = sorted(planned - loaders.keys())
     if missing:
         raise PortError(f"the pipeline has no {', '.join(missing)}; stageload's plan needs them")
-    models = StagedModels(
-        {name: _model_loader(real_from_pretrained, path, device) for name, path in paths.items()},
-        stages=STAGES,
-        events=sink,
-    )
+    models = StagedModels(loaders, stages=STAGES, events=sink)
+    for name, module in built.items():
+        # not built through models.from_pretrained, so it cannot be loaded again: kept as it is
+        models[name] = module
+        models.pin(name)
     models.enter("setup")
     pipeline.models = models
     pipeline.low_vram = False
@@ -188,7 +208,7 @@ def build_staged(
     extractors = _build_extractors(port, device)
     for attr, module in extractors.items():
         setattr(pipeline, attr, module)
-    if getattr(args, "tex_recalib", False) or getattr(args, "tex_sat_boost", 1.0) != 1.0:
+    if recalib:
         port.gm._install_tex_pbr_recalib(
             pipeline,
             recalib_metallic=bool(getattr(args, "tex_recalib", False)),
@@ -220,8 +240,8 @@ def generate(
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
-    if stop_at is not None and stop_at not in STAGES:
-        raise ValueError(f"stop_at must be one of {list(STAGES)}, not {stop_at!r}")
+    if stop_at is not None and stop_at not in STOP_STAGES:
+        raise ValueError(f"stop_at must be one of {list(STOP_STAGES)}, not {stop_at!r}")
     glb_path = Path(port.gm.output_glb_path(args.output))
     glb_path.parent.mkdir(parents=True, exist_ok=True)
     staged: StagedPipeline | None = None
@@ -241,19 +261,19 @@ def generate(
     if fingerprint_dir is not None:
         Fingerprints(fingerprint_dir).install(pipeline)
     try:
-        asset = port.gm.image_to_asset(pipeline, image, args, device, tmp_dir=glb_path.parent)
-        if getattr(args, "save_mesh", None):
-            port.gm.save_mesh_checkpoint(
-                args.save_mesh, asset.mesh, asset.vertices, asset.faces, asset.resolution
-            )
-        on_stage("export")
-    except StopRun as stop:
-        if sink is not None:
-            sink.emit(Event("mark", note=f"stopped at {stop.stage}"))
+        try:
+            asset = port.gm.image_to_asset(pipeline, image, args, device, tmp_dir=glb_path.parent)
+            if getattr(args, "save_mesh", None):
+                port.gm.save_mesh_checkpoint(
+                    args.save_mesh, asset.mesh, asset.vertices, asset.faces, asset.resolution
+                )
+            on_stage("export")
+        except StopRun as stop:
+            if sink is not None:
+                sink.emit(Event("mark", note=f"stopped at {stop.stage}"))
+            return None
+        port.gm.asset_to_glb(asset, glb_path, args)
+        return glb_path
+    finally:
         if staged is not None:
             staged.close()
-        return None
-    port.gm.asset_to_glb(asset, glb_path, args)
-    if staged is not None:
-        staged.close()
-    return glb_path

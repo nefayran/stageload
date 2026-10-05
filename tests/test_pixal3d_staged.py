@@ -98,8 +98,6 @@ def test_a_pipeline_without_a_planned_model_is_a_port_error(fake_port, tmp_path,
         build_staged(fake_port, port_args(fake_port, tmp_path), "cpu")
 
 
-
-
 def test_models_are_built_on_the_target_device_and_fall_back_to_the_cpu():
     import warnings
 
@@ -118,12 +116,86 @@ def test_models_are_built_on_the_target_device_and_fall_back_to_the_cpu():
     assert seen == [device]
     assert module.weight.device.type == device and not module.training
 
-    def build_cpu_only(path):
-        if torch.empty(0).device.type != "cpu":
+    calls = []
+
+    def build_fails_on_the_device(path):
+        calls.append(torch.empty(0).device.type)
+        if len(calls) == 1:
             raise RuntimeError("this constructor only runs on the CPU")
         return torch.nn.Linear(2, 2)
 
-    with warnings.catch_warnings(record=True):
+    with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        module = _model_loader(build_cpu_only, "ckpts/odd", device)()
+        module = _model_loader(build_fails_on_the_device, "ckpts/odd", device)()
+    assert calls == [device, "cpu"]
+    assert any("building on the CPU instead" in str(w.message) for w in caught)
     assert module.weight.device.type == device
+
+
+def test_the_staged_pipeline_matches_what_the_port_builds(fake_port, tmp_path):
+    args = port_args(fake_port, tmp_path, "--tex-recalib", "--tex-sat-boost", "1.2")
+    eager = fake_port.gm.load_pipeline(args, "cpu")
+    staged = build_staged(fake_port, args, "cpu", install_hooks=False).pipeline
+    assert vars(staged).keys() == vars(eager).keys()
+    differences = {k for k in vars(eager) if type(vars(eager)[k]) is not type(vars(staged)[k])}
+    assert differences == {"models"}
+    assert staged.low_vram is False and eager.low_vram is True
+    assert staged.decode_tex_slat.recalib == eager.decode_tex_slat.recalib == (
+        True, 0.0002, 0.001, 1.2)
+
+
+def test_a_port_without_the_recalibration_hook_is_reported(fake_port, tmp_path, monkeypatch):
+    monkeypatch.delattr(fake_port.gm, "_install_tex_pbr_recalib")
+    with pytest.raises(PortError, match="_install_tex_pbr_recalib"):
+        build_staged(fake_port, port_args(fake_port, tmp_path, "--tex-recalib"), "cpu")
+
+
+def test_staged_loading_refuses_a_pipeline_it_has_no_plan_for(fake_port, tmp_path):
+    args = port_args(fake_port, tmp_path, "--pipeline-type", "1536_cascade")
+    with pytest.raises(ValueError, match="1536_cascade"):
+        build_staged(fake_port, args, "cpu")
+
+
+def test_a_model_the_pipeline_built_itself_is_kept_for_the_whole_run(fake_port, tmp_path,
+                                                                    monkeypatch):
+    import torch
+
+    pipelines = importlib.import_module("pixal3d.pipelines")
+    original = pipelines.Pixal3DImageTo3DPipeline.from_pretrained.__func__
+
+    def with_extra(cls, path):
+        pipeline = original(cls, path)
+        pipeline.models["extra"] = torch.nn.Linear(2, 2)
+        return pipeline
+
+    monkeypatch.setattr(pipelines.Pixal3DImageTo3DPipeline, "from_pretrained",
+                        classmethod(with_extra))
+    staged = build_staged(fake_port, port_args(fake_port, tmp_path), "cpu")
+    for stage in STAGES:
+        staged.enter_stage(stage)
+        assert "extra" in staged.models.loaded()
+    staged.close()
+    assert staged.models.loaded() == []
+
+
+def test_a_run_cannot_be_stopped_at_setup(fake_port, tmp_path):
+    with pytest.raises(ValueError, match="stop_at"):
+        generate(fake_port, port_args(fake_port, tmp_path), "image", "cpu", mode="eager",
+                 stop_at="setup")
+
+
+def test_an_except_exception_in_the_port_does_not_swallow_the_stop(fake_port, tmp_path,
+                                                                    monkeypatch):
+    original = fake_port.gm.image_to_asset
+
+    def careless(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        except Exception:
+            return None
+
+    monkeypatch.setattr(fake_port.gm, "image_to_asset", careless)
+    out = generate(fake_port, port_args(fake_port, tmp_path), "image", "cpu", mode="staged",
+                   stop_at="texture")
+    assert out is None
+    assert not (tmp_path / "out.glb").exists()

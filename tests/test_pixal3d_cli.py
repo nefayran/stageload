@@ -41,7 +41,9 @@ def test_options_after_the_image_are_not_swallowed(fake_port_dir, tmp_path, monk
     assert "--load eager" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag", ["--flash-sdpa", "--load-mesh=m.npz", "--free-spent-models"])
+@pytest.mark.parametrize(
+    "flag", ["--flash-sdpa", "--flash", "--load-mesh=m.npz", "--free-spent-models"]
+)
 def test_flags_for_other_branches_of_main_are_refused(fake_port_dir, tmp_path, flag, capsys):
     code = main(["x.png", "-o", str(tmp_path / "o.glb"), "--port", str(fake_port_dir),
                  "--load", "eager", "--", flag])
@@ -71,3 +73,45 @@ def test_an_unknown_stop_stage_is_refused(fake_port_dir, tmp_path, capsys):
                  str(fake_port_dir), "--stop-at", "nowhere"])
     assert code == 2
     assert "--stop-at must be one of" in capsys.readouterr().err
+
+
+def test_stopping_at_setup_is_refused(fake_port_dir, tmp_path, capsys):
+    code = main(["x.png", "-o", str(tmp_path / "o.glb"), "--port", str(fake_port_dir),
+                 "--stop-at", "setup"])
+    assert code == 2
+    assert "--stop-at must be one of preprocess" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "flags", [["--pipeline", "1536_cascade"], ["--", "--pipeline-type", "1536_cascade"]]
+)
+def test_staged_loading_refuses_other_pipelines(fake_port_dir, tmp_path, flags, capsys):
+    code = main(["x.png", "-o", str(tmp_path / "o.glb"), "--port", str(fake_port_dir), *flags])
+    assert code == 2
+    assert "1024_cascade only" in capsys.readouterr().err
+
+
+@macos
+def test_the_trace_records_what_the_port_was_given(fake_port_dir, tmp_path):
+    trace = tmp_path / "t.jsonl"
+    code = main([str(image_file(tmp_path)), "-o", str(tmp_path / "o.glb"), "--port",
+                 str(fake_port_dir), "--load", "eager", "--trace", str(trace), "--",
+                 "--pipeline-type", "1536_cascade"])
+    assert code == 0
+    assert json.loads(trace.read_text().splitlines()[0])["pipeline"] == "1536_cascade"
+
+
+@macos
+def test_a_port_that_changed_is_reported_without_a_traceback(fake_port_dir, tmp_path,
+                                                             monkeypatch, capsys):
+    from stageload.pixal3d import staged
+    from stageload.pixal3d.port import PortError
+
+    def changed(port):
+        raise PortError("the port has changed")
+
+    monkeypatch.setattr(staged, "check_pipeline_api", changed)
+    code = main([str(image_file(tmp_path)), "-o", str(tmp_path / "o.glb"), "--port",
+                 str(fake_port_dir), "--trace", str(tmp_path / "t.jsonl")])
+    assert code == 2
+    assert "the port has changed" in capsys.readouterr().err

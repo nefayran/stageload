@@ -37,7 +37,13 @@ def parse_args(argv=None):
     parser.add_argument("--save-mesh", default=None)
     parser.add_argument("--low-vram", action="store_true")
     parser.add_argument("--tex-recalib", action="store_true")
+    parser.add_argument("--tex-metallic-mean", type=float, default=0.0002)
+    parser.add_argument("--tex-metallic-std", type=float, default=0.001)
     parser.add_argument("--tex-sat-boost", type=float, default=1.0)
+    parser.add_argument("--flash-sdpa", action="store_true")
+    parser.add_argument("--load-mesh", default=None)
+    parser.add_argument("--load-fixture-07", default=None)
+    parser.add_argument("--free-spent-models", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -75,14 +81,38 @@ def build_image_cond_model(config, device):
     return model
 
 
-def load_pipeline(args, device=None):
-    device = device or resolve_device(args.device)
-    pipeline = Pixal3DImageTo3DPipeline.from_pretrained(args.model_path)
+def _install_tex_pbr_recalib(pipeline, recalib_metallic, metallic_mean, metallic_std, sat_boost):
+    orig = pipeline.decode_tex_slat
+
+    def wrapped(slat, *a, **k):
+        return orig(slat, *a, **k)
+
+    wrapped.recalib = (recalib_metallic, metallic_mean, metallic_std, sat_boost)
+    pipeline.decode_tex_slat = wrapped
+
+
+def init_pipeline(model_path, device):
+    pipeline = Pixal3DImageTo3DPipeline.from_pretrained(model_path)
     pipeline.to(device)
     for attr, key in EXTRACTOR_KEYS.items():
         setattr(pipeline, attr, build_image_cond_model(IMAGE_COND_CONFIGS[key], device))
+    for attr in EXTRACTOR_KEYS:
         if getattr(pipeline, attr).use_naf_upsample:
             getattr(pipeline, attr)._load_naf()
+    return pipeline
+
+
+def load_pipeline(args, device=None):
+    device = device or resolve_device(args.device)
+    pipeline = init_pipeline(args.model_path, device)
+    if getattr(args, "tex_recalib", False) or getattr(args, "tex_sat_boost", 1.0) != 1.0:
+        _install_tex_pbr_recalib(
+            pipeline,
+            recalib_metallic=bool(getattr(args, "tex_recalib", False)),
+            metallic_mean=float(getattr(args, "tex_metallic_mean", 0.0002)),
+            metallic_std=float(getattr(args, "tex_metallic_std", 0.001)),
+            sat_boost=float(getattr(args, "tex_sat_boost", 1.0)),
+        )
     return pipeline
 
 

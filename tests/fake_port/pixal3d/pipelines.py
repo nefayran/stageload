@@ -135,9 +135,12 @@ class Pixal3DImageTo3DPipeline:
             feats=torch.randn(shape_slat.coords.shape[0], 8).to(self.device))
         return self._sample(self.tex_slat_sampler, flow_model, noise, cond)
 
+    def decode_tex_slat(self, slat):
+        return self._use("tex_slat_decoder", "forward", slat)
+
     def decode_latent(self, shape_slat, tex_slat, resolution):
         self._use("shape_slat_decoder", "forward", shape_slat)
-        self._use("tex_slat_decoder", "forward", tex_slat)
+        self.decode_tex_slat(tex_slat)
         return ["mesh"]
 
     def run(self, image, seed=42, preprocess_image=True, return_latent=False,

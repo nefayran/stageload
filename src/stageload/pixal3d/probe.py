@@ -20,8 +20,12 @@ from ..hooks import on_call
 SAMPLERS = ("sparse_structure_sampler", "shape_slat_sampler", "tex_slat_sampler")
 
 
-class StopRun(Exception):
-    """Raised where a stage begins when the run was asked to stop there."""
+class StopRun(BaseException):
+    """Raised where a stage begins when the run was asked to stop there.
+
+    A BaseException, like KeyboardInterrupt, so that an ``except Exception`` in the port does
+    not catch it and carry on.
+    """
 
     def __init__(self, stage: str) -> None:
         super().__init__(f"stopped when entering stage {stage!r}")
@@ -48,9 +52,8 @@ def _tensors(obj: Any) -> dict[str, torch.Tensor]:
         return {"coords": obj.coords, "feats": obj.feats}
     if isinstance(obj, Mapping) and "samples" in obj:
         return _tensors(obj["samples"])
-    if hasattr(obj, "samples"):
-        return _tensors(obj.samples)
-    return {}
+    samples = getattr(obj, "samples", None)
+    return _tensors(samples) if samples is not None else {}
 
 
 def _describe(name: str, tensor: torch.Tensor) -> dict[str, Any]:
