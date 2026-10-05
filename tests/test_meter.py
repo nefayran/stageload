@@ -71,11 +71,32 @@ def test_a_failing_reader_is_noted_once_and_sampling_goes_on(tmp_path):
         return calls["n"]
 
     readers = Readers(footprint=flaky, swap_used=lambda: 5, level=lambda: 77)
+    deadline = time.monotonic() + 5
     with MemoryMeter(path, interval=0.01, readers=readers):
-        while calls["n"] < 10:
+        while calls["n"] < 10 and time.monotonic() < deadline:
             time.sleep(0.01)
+    assert calls["n"] >= 10, "the meter stopped sampling after the first failed read"
     records = [json.loads(line) for line in path.read_text().splitlines()]
     errors = [r for r in records if r["type"] == "error"]
     assert [e["error"] for e in errors] == ["OSError: sysctl failed"]
     assert sum(r["type"] == "sample" for r in records) >= 3
     assert records[-1] == {"type": "end"}
+
+
+def test_an_error_that_comes_back_after_a_recovery_is_noted_again(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] in (2, 3, 6):
+            raise OSError("sysctl failed")
+        return calls["n"]
+
+    readers = Readers(footprint=flaky, swap_used=lambda: 5, level=lambda: 77)
+    deadline = time.monotonic() + 5
+    with MemoryMeter(path, interval=0.01, readers=readers):
+        while calls["n"] < 8 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert sum(r["type"] == "error" for r in records) == 2

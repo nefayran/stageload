@@ -44,8 +44,9 @@ def test_stages_cover_the_run_in_order_with_their_own_peaks():
     stages = summarize(RECORDS)["stages"]
     assert stages == [
         {"stage": "setup", "seconds": 0.1, "peak_footprint": 100},
-        {"stage": "structure", "seconds": 1.9, "peak_footprint": 300},
-        {"stage": "texture", "seconds": 2.0, "peak_footprint": 250},
+        # texture begins when ss_flow's release ends, at 2.1
+        {"stage": "structure", "seconds": 2.0, "peak_footprint": 300},
+        {"stage": "texture", "seconds": 1.9, "peak_footprint": 250},
     ]
 
 
@@ -100,3 +101,29 @@ def test_a_broken_line_inside_the_trace_is_an_error(tmp_path):
     path.write_text('{"type":"sam\n' + json.dumps(sample(0.5, 20)) + "\n")
     with pytest.raises(json.JSONDecodeError):
         read_trace(path)
+
+
+def test_a_stage_begins_once_the_releases_its_start_set_off_have_finished():
+    records = [
+        sample(0.0, 10),
+        event(1.0, "stage", stage="texture"),
+        sample(1.5, 300),
+        event(5.0, "stage", stage="decode"),
+        sample(5.4, 290),  # still the texture model's memory: its release ends at 6.0
+        event(6.0, "release", name="tex_flow", nbytes=280, stage="decode"),
+        sample(6.5, 40),
+        event(7.0, "load", name="tex_dec", nbytes=20, seconds=0.5, stage="decode"),
+        sample(7.5, 60),
+    ]
+    stages = summarize(records)["stages"]
+    assert [(s["stage"], s["seconds"], s["peak_footprint"]) for s in stages] == [
+        ("setup", 1.0, 10),
+        ("texture", 5.0, 300),
+        ("decode", 1.5, 60),
+    ]
+
+
+def test_failed_reads_are_listed_in_the_summary():
+    records = [sample(0.0, 10), {"type": "error", "t": 0.5, "error": "OSError: sysctl failed"},
+               sample(1.0, 20)]
+    assert summarize(records)["errors"] == [{"t": 0.5, "error": "OSError: sysctl failed"}]

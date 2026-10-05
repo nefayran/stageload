@@ -21,6 +21,23 @@ def read_trace(path: str | Path) -> list[dict[str, Any]]:
     return records
 
 
+def _stage_starts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Where each stage's own work begins: after the releases that entering it set off. Until
+    they finish, the memory still belongs to the stage before, and a sample taken in between
+    would count it towards the new stage."""
+    starts = []
+    for i, event in enumerate(events):
+        if event["kind"] != "stage":
+            continue
+        t = event["t"]
+        for follow in events[i + 1 :]:
+            if follow["kind"] != "release":
+                break
+            t = follow["t"]
+        starts.append({"t": t, "stage": event["stage"]})
+    return starts
+
+
 def _windows(stage_events: list[dict[str, Any]], end: float) -> list[tuple[str, float, float]]:
     """Consecutive (stage, start, end) windows; the time before the first stage is ``setup``.
 
@@ -43,10 +60,11 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     events = [r for r in records if r["type"] == "event"]
     loads = [e for e in events if e["kind"] in ("load", "reload")]
     releases = [e for e in events if e["kind"] == "release"]
+    errors = [r for r in records if r["type"] == "error"]
     end = samples[-1]["t"] if samples else 0.0
     stages = []
     if samples:
-        for stage, t0, t1 in _windows([e for e in events if e["kind"] == "stage"], end):
+        for stage, t0, t1 in _windows(_stage_starts(events), end):
             inside = [s["footprint"] for s in samples if t0 <= s["t"] < t1 or s["t"] == t1 == end]
             stages.append(
                 {
@@ -78,4 +96,6 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "releases": {"count": len(releases), "bytes": sum(e.get("nbytes", 0) for e in releases)},
         "outside_stage": sorted({e["name"] for e in loads if e.get("note") == "outside_stage"}),
+        # reads that failed while sampling: the samples have a gap there
+        "errors": [{"t": r["t"], "error": r["error"]} for r in errors],
     }

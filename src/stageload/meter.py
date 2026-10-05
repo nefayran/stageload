@@ -203,7 +203,8 @@ class MemoryMeter:
             self._sample_or_note()
 
     def _sample_or_note(self) -> None:
-        """A failed read is written to the trace, once per distinct error, and sampling goes on."""
+        """A failed read is written to the trace, once until a read succeeds again, and sampling
+        goes on."""
         try:
             self.sample()
         except Exception as error:
@@ -212,6 +213,8 @@ class MemoryMeter:
                 self._last_error = message
                 t = round(time.monotonic() - self._t0, 3)
                 self._write({"type": "error", "t": t, "error": message})
+        else:
+            self._last_error = None
 
     def _write(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, separators=(",", ":"))
