@@ -32,6 +32,8 @@ stageload-pixal3d photo.png -o photo.glb --load eager     # the port's own loadi
 | `--texture-size` | `2048` | passed to the port |
 | `--trace FILE` | next to the output | the JSONL trace of this run |
 | `--port DIR` | `$PIXAL3D_MAC_DIR`, then `~/local-llm/Pixal3D-mac` | the port checkout |
+| `--stop-at STAGE` | none | end the run where that stage would begin; no GLB is written |
+| `--fingerprint DIR` | none | save a hash and a copy of every sampler's output |
 
 Any other flag goes to the port's own argument parser, so its defaults and checks apply.
 
@@ -78,11 +80,27 @@ prints the peak footprint overall and per stage, swap at the start, peak and end
 and the bytes and seconds spent loading models. A model that was loaded outside the stage the plan
 gives it is listed under `outside_stage`.
 
+## Check that staged loading changes nothing
+
+The port seeds once at the start of `run()` and draws every stage's noise from the CPU random
+generator. Building a model runs its random initialisation, so a model built in the middle of the
+run would change the noise of every later stage. `StagedModels` saves and restores the CPU, MPS
+and CUDA generator states around each load, so a staged run draws exactly the noise an eager run
+draws.
+
+`--fingerprint DIR` hashes the output of every sampler call (sparse structure, the low- and
+high-resolution shape latents, the texture latent) and saves a copy, and
+`bench/compare_fingerprints.py A B` compares two runs call by call. Together with `--stop-at`, this
+also works when eager loading does not fit in memory: stop the eager runs where the texture stage
+would begin and compare the stages before it.
+
 ## Compare eager and staged
 
 ```bash
 .venv/bin/python bench/pixal3d_ab.py --python ~/local-llm/Pixal3D-mac/.venv/bin/python \
-  --image photo.png --out bench/results/my-run --runs 2
+  --image photo.png --out bench/results/my-run --runs 2 --fingerprints \
+  --eager-stop-at texture          # only where eager loading does not fit
+.venv/bin/python bench/compare_fingerprints.py bench/results/my-run/fp-eager-1 bench/results/my-run/fp-staged-1
 .venv/bin/python bench/compare_glb.py bench/results/my-run/eager-1.glb bench/results/my-run/staged-1.glb
 .venv/bin/python bench/summarize_runs.py bench/results/my-run
 .venv/bin/python bench/plot_trace.py bench/results/my-run/eager-1.trace.jsonl \
