@@ -21,3 +21,20 @@ def test_guard_needs_a_command(capsys):
         main(["guard", "--"])
     assert exit_.value.code == 2
     assert "needs a command" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--wait-free", "140"], "out of range"),
+        (["--kill-free", "ten"], "whole percent"),
+        (["--poll", "0s"], "more than zero"),
+        (["--busy", "ltx("], "bad regex"),
+        (["--swap-budget", "lots"], "not a size"),
+    ],
+)
+def test_guard_rejects_bad_flags_before_waiting(flags, message, capsys):
+    with pytest.raises(SystemExit) as exit_:
+        main(["guard", *flags, "--", "true"])
+    assert exit_.value.code == 2
+    assert message in capsys.readouterr().err

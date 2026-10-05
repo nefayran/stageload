@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -22,6 +23,31 @@ def _arg(parse: Callable[[str], Any]) -> Callable[[str], Any]:
     return convert
 
 
+def _percent(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"not a whole percent: {text!r}") from error
+    if not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError(f"percent out of range 0-100: {value}")
+    return value
+
+
+def _positive_duration(text: str) -> float:
+    value = _arg(parse_duration)(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be more than zero: {text!r}")
+    return value
+
+
+def _regex(text: str) -> str:
+    try:
+        re.compile(text)
+    except re.error as error:
+        raise argparse.ArgumentTypeError(f"bad regex {text!r}: {error}") from error
+    return text
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stageload")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -29,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
         "guard", help="run one command when there is room and stop it before swap runs away"
     )
     guard.add_argument(
-        "--wait-free", type=int, default=40, metavar="PERCENT",
+        "--wait-free", type=_percent, default=40, metavar="PERCENT",
         help="memory available before starting (default 40)",
     )
     guard.add_argument(
@@ -41,11 +67,11 @@ def _parser() -> argparse.ArgumentParser:
         help="absolute swap ceiling, also checked before starting",
     )
     guard.add_argument(
-        "--kill-free", type=int, default=10, metavar="PERCENT",
+        "--kill-free", type=_percent, default=10, metavar="PERCENT",
         help="stop the command after two samples under this (default 10)",
     )
     guard.add_argument(
-        "--busy", action="append", default=[], metavar="REGEX",
+        "--busy", action="append", type=_regex, default=[], metavar="REGEX",
         help="do not start while a process matches (repeatable)",
     )
     guard.add_argument(
@@ -53,7 +79,7 @@ def _parser() -> argparse.ArgumentParser:
         help="with --busy: start only after no busy process was seen for this long (default 1m)",
     )
     guard.add_argument("--start-timeout", type=_arg(parse_duration), default="30m")
-    guard.add_argument("--poll", type=_arg(parse_duration), default="5s")
+    guard.add_argument("--poll", type=_positive_duration, default="5s")
     guard.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command ...")
     summary = sub.add_parser("summary", help="print the summary of a trace file as JSON")
     summary.add_argument("trace")
