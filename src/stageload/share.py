@@ -14,7 +14,9 @@ def _default_key(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Hashable:
     try:
         hash(key)
     except TypeError:
-        return repr(key)
+        # two different objects can print the same (a large array's repr skips its middle),
+        # so a call that cannot be keyed is not shared
+        return _MISSING
     return key
 
 
@@ -23,6 +25,9 @@ def share(
     owner: Any, attr: str, *, key: Callable[..., Hashable] | None = None
 ) -> Iterator[dict[Hashable, Any]]:
     """Within the block, calls to ``owner.attr`` with the same key return the first result.
+
+    By default the key is the call's arguments; a call with an argument that cannot be hashed,
+    such as a dict or a list, is passed through and not shared. ``key`` replaces that rule.
 
     ``owner`` can be a class (for a classmethod such as ``from_pretrained``) or a module. The
     original attribute is restored on exit; an attribute the owner inherited is removed again
@@ -34,6 +39,8 @@ def share(
 
     def shared(*args: Any, **kwargs: Any) -> Any:
         cache_key = key(*args, **kwargs) if key is not None else _default_key(args, kwargs)
+        if cache_key is _MISSING:
+            return target(*args, **kwargs)
         if cache_key not in cache:
             cache[cache_key] = target(*args, **kwargs)
         return cache[cache_key]

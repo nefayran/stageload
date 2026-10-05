@@ -65,3 +65,13 @@ def test_the_attribute_is_restored_when_the_block_raises():
     except RuntimeError:
         pass
     assert isinstance(vars(Backbone)["from_pretrained"], classmethod)
+
+
+def test_calls_that_cannot_be_keyed_are_not_shared():
+    Backbone.built = 0
+    with share(Backbone, "from_pretrained") as cache:
+        a = Backbone.from_pretrained({"layers": 12})
+        b = Backbone.from_pretrained({"layers": 12})
+    assert a is not b
+    assert Backbone.built == 2
+    assert cache == {}

@@ -71,3 +71,15 @@ def test_releasing_twice_frees_nothing_the_second_time():
     module = Tiny()
     release(module, empty_cache=False)
     assert release(module, empty_cache=False).nbytes == 0
+
+
+def test_empty_tensors_are_released_and_never_counted_as_kept():
+    kept = nn.Module()
+    kept.register_buffer("empty", torch.empty(0))
+    module = nn.Module()
+    module.register_buffer("empty", torch.empty(0))
+    module.weight = nn.Parameter(torch.ones(3))
+    stats = release(module, keep=[kept])
+    assert stats.kept == 0
+    assert module.empty.device.type == "meta"
+    assert kept.empty.device.type == "cpu"

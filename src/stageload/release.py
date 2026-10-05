@@ -82,35 +82,45 @@ def release(
 ) -> ReleaseStats:
     """Move every parameter and buffer of ``module`` to the meta device and free their storage.
 
-    Tensors whose storage is shared with a module in ``keep`` are left alone. Afterwards the
-    module's ``forward`` raises :class:`ReleasedModuleError`.
+    Tensors whose storage is shared with a module in ``keep`` are left alone. Afterwards calling
+    ``module`` raises :class:`ReleasedModuleError`. Its submodules are released too, but calling
+    one of them directly fails with PyTorch's own error about tensors on the meta device.
     """
     kept_storage = {
         _storage_key(tensor)
         for other in keep
         for tensor in [*other.parameters(), *other.buffers()]
-        if tensor.device.type != "meta"
+        if tensor.device.type != "meta" and tensor.untyped_storage().nbytes()
     }
     freed: set[tuple[str, int]] = set()
     nbytes = 0
     kept = 0
+
+    def frees(tensor: torch.Tensor | None) -> bool:
+        nonlocal nbytes, kept
+        if tensor is None or tensor.device.type == "meta":
+            return False
+        size = tensor.untyped_storage().nbytes()
+        if not size:
+            # empty storages all have the same address and hold nothing to keep or count
+            return True
+        storage = _storage_key(tensor)
+        if storage in kept_storage:
+            kept += 1
+            return False
+        if storage not in freed:
+            freed.add(storage)
+            nbytes += size
+        return True
+
     for sub in module.modules():
-        for table in (sub._parameters, sub._buffers):
-            for key, tensor in list(table.items()):
-                if tensor is None or tensor.device.type == "meta":
-                    continue
-                storage = _storage_key(tensor)
-                if storage in kept_storage:
-                    kept += 1
-                    continue
-                if storage not in freed:
-                    freed.add(storage)
-                    nbytes += tensor.untyped_storage().nbytes()
-                meta = tensor.detach().to("meta")
-                if table is sub._parameters:
-                    table[key] = nn.Parameter(meta, requires_grad=tensor.requires_grad)
-                else:
-                    table[key] = meta
+        for key, param in list(sub._parameters.items()):
+            if param is not None and frees(param):
+                meta = param.detach().to("meta")
+                sub._parameters[key] = nn.Parameter(meta, requires_grad=param.requires_grad)
+        for key, buffer in list(sub._buffers.items()):
+            if buffer is not None and frees(buffer):
+                sub._buffers[key] = buffer.detach().to("meta")
     setattr(module, _RELEASED, (name, stage))
     module.forward = _raise_released(name, stage)
     gc.collect()
