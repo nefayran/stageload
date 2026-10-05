@@ -27,8 +27,8 @@ def compare(a: Path, b: Path) -> list[dict[str, Any]]:
                                    "equal": ta[name]["sha256"] == tb[name]["sha256"],
                                    "shape": ta[name]["shape"], "max_abs_diff": 0.0}
             if not row["equal"]:
-                xa = torch.load(Path(a) / f"{call}.pt")[name]
-                xb = torch.load(Path(b) / f"{call}.pt")[name]
+                xa = torch.load(Path(a) / f"{call}.pt", weights_only=True)[name]
+                xb = torch.load(Path(b) / f"{call}.pt", weights_only=True)[name]
                 if xa.shape != xb.shape:
                     row["max_abs_diff"] = None
                     row["shape_b"] = list(xb.shape)

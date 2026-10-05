@@ -13,7 +13,10 @@ import trimesh
 
 
 def _mesh(path: Path) -> trimesh.Trimesh:
-    return trimesh.load(path, force="mesh", process=False)
+    mesh = trimesh.load(path, force="mesh", process=False)
+    if not isinstance(mesh, trimesh.Trimesh):
+        raise ValueError(f"{path} holds no triangle mesh")
+    return mesh
 
 
 def _texture(mesh: trimesh.Trimesh) -> np.ndarray | None:
