@@ -18,6 +18,16 @@ pipeline moves to a stage that does not need it. Releasing moves the module's te
 `meta` device, which frees their storage even while other code still holds a reference to the
 module. The design is in [docs/design/2026-10-04-stageload-design.md](docs/design/2026-10-04-stageload-design.md).
 
+## Any pipeline that runs its models in turn
+
+Nothing in the core knows about Pixal3D. A pipeline needs three things: a function that builds
+each model on its own, the list of models each stage uses, and a call where each stage begins.
+In code you own, that call is `models.enter("decode")`; in code you don't, `on_call` attaches it
+to a method that already runs at that point, and the pipeline stays as it is. A text-to-image
+pipeline (a text encoder, a denoiser and an image decoder, one after another) has the same shape.
+Pixal3D-mac is the first adapter and the only pipeline measured so far;
+[Use it in your own pipeline](#use-it-in-your-own-pipeline) shows the core on two models.
+
 ## Results
 
 Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two runs per mode
