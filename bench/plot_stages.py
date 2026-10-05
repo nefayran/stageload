@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+matplotlib.rcParams["svg.hashsalt"] = "stageload"  # the same SVG ids on every run
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
