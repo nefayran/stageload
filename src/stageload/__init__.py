@@ -2,6 +2,7 @@
 
 from .events import Event, EventSink, ListSink
 from .hooks import on_call
+from .meter import MemoryMeter
 from .registry import StagedModels
 from .release import ReleasedModuleError, ReleaseStats, release
 from .share import share
@@ -12,6 +13,7 @@ __all__ = [
     "Event",
     "EventSink",
     "ListSink",
+    "MemoryMeter",
     "ReleaseStats",
     "ReleasedModuleError",
     "StagedModels",
