@@ -75,7 +75,8 @@ def plot(traces: list[Path], out: Path, ram_bytes: int | None = None) -> list[Pa
     written = []
     for suffix in (".svg", ".png"):
         target = out.with_suffix(suffix)
-        fig.savefig(target, dpi=160)
+        # no date in the SVG: matplotlib writes the local time, and with it the time zone
+        fig.savefig(target, dpi=160, metadata={"Date": None} if suffix == ".svg" else None)
         written.append(target)
     plt.close(fig)
     return written

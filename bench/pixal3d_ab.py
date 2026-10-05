@@ -2,7 +2,8 @@
 
 `--eager-stop-at texture` ends eager runs where the texture stage would begin, for a machine
 where eager loading does not fit; `--fingerprints` saves every sampler's output for
-compare_fingerprints.py.
+compare_fingerprints.py. Every run waits until no other Pixal3D run is going; `--busy` adds
+patterns for the other heavy jobs of the machine (repeatable).
 """
 
 from __future__ import annotations
@@ -13,23 +14,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-BUSY = (
-    "ltx-2-mlx",
-    "rife-ncnn-vulkan",
-    "realcugan-ncnn-vulkan",
-    "mflux",
-    r"foley_mac\.py",
-    r"generate_mps\.py",
-    "MacOS/Blender -b",
-    r"Godot\.app/Contents/MacOS/Godot",
-    r"stageload\.pixal3d",
-)
+BUSY = (r"generate_mps\.py", r"stageload\.pixal3d")
 
 
 def run_one(python: str, image: Path, out: Path, mode: str, run: int, port: str | None,
             stop_at: str | None = None, fingerprints: bool = False,
-            start_timeout: str = "30m") -> int:
-    busy = [arg for pattern in BUSY for arg in ("--busy", pattern)]
+            start_timeout: str = "30m", busy_patterns: tuple[str, ...] = BUSY,
+            quiet_for: str = "3m") -> int:
+    busy = [arg for pattern in busy_patterns for arg in ("--busy", pattern)]
     target = [
         python, "-m", "stageload.pixal3d", str(image), "-o", str(out / f"{mode}-{run}.glb"),
         "--load", mode, "--trace", str(out / f"{mode}-{run}.trace.jsonl"),
@@ -42,7 +34,7 @@ def run_one(python: str, image: Path, out: Path, mode: str, run: int, port: str 
         target += ["--fingerprint", str(out / f"fp-{mode}-{run}")]
     cmd = [
         "nice", "-n", "15", python, "-m", "stageload", "guard", "--wait-free", "40",
-        "--swap-budget", "8G", "--quiet-for", "3m", "--start-timeout", start_timeout, *busy,
+        "--swap-budget", "8G", "--quiet-for", quiet_for, "--start-timeout", start_timeout, *busy,
         "--", "nice", "-n", "15", *target,
     ]
     with (out / f"{mode}-{run}.log").open("w") as log:
@@ -60,6 +52,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fingerprints", action="store_true")
     parser.add_argument("--start-timeout", default="30m",
                         help="how long each run may wait for room and for other heavy jobs")
+    parser.add_argument("--busy", action="append", default=[], metavar="REGEX",
+                        help="also wait while a process matches this (repeatable)")
+    parser.add_argument("--quiet-for", default="3m",
+                        help="start a run only after no busy process was seen for this long")
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -67,7 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         for mode in ("eager", "staged"):
             stop_at = args.eager_stop_at if mode == "eager" else None
             code = run_one(args.python, args.image, args.out, mode, run, args.port, stop_at,
-                           args.fingerprints, args.start_timeout)
+                           args.fingerprints, args.start_timeout, (*BUSY, *args.busy),
+                           args.quiet_for)
             runs.append({"mode": mode, "run": run, "exit": code})
             (args.out / "runs.json").write_text(json.dumps(runs, indent=2) + "\n")
             if code != 0:
