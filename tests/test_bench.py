@@ -102,3 +102,14 @@ def test_fingerprints_report_equal_calls_and_the_size_of_a_difference(tmp_path):
     assert compare_fp(a, b) == [{"call": "shape_slat_sampler#1", "tensor": "feats", "equal": True,
                                  "shape": [3], "max_abs_diff": 0.0}]
     assert compare_fp(a, c)[0]["max_abs_diff"] == 0.5
+
+
+def test_plot_titles_say_where_a_run_ended(tmp_path):
+    from bench.plot_trace import _label
+
+    end = {"type": "end"}
+    stopped = {"type": "start", "mode": "eager", "stop_at": "texture"}
+    assert _label([stopped, end], tmp_path / "a") == "eager, stopped where texture begins"
+    killed = {"type": "start", "mode": "eager"}
+    assert _label([killed], tmp_path / "b") == "eager, stopped by the guard"
+    assert _label([{"type": "start", "mode": "staged"}, end], tmp_path / "c") == "staged"

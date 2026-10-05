@@ -1,0 +1,7 @@
+[
+  {"mode": "eager", "run": 1, "exit": 0, "stop_at": "texture"},
+  {"mode": "staged", "run": 1, "exit": 0},
+  {"mode": "eager", "run": 2, "exit": 0, "stop_at": "texture"},
+  {"mode": "staged", "run": 2, "exit": 0, "note": "built every model on the CPU first; kept in cpu-build/ as an experiment, not counted below"},
+  {"mode": "staged", "run": 3, "exit": 0, "note": "the final loader again, started by hand with the same guard settings"}
+]

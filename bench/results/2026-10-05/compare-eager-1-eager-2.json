@@ -1,0 +1,63 @@
+[
+  {
+    "call": "sparse_structure_sampler#1",
+    "tensor": "tensor",
+    "equal": true,
+    "shape": [
+      1,
+      8,
+      16,
+      16,
+      16
+    ],
+    "max_abs_diff": 0.0
+  },
+  {
+    "call": "shape_slat_sampler#1",
+    "tensor": "coords",
+    "equal": true,
+    "shape": [
+      3225,
+      4
+    ],
+    "max_abs_diff": 0.0
+  },
+  {
+    "call": "shape_slat_sampler#1",
+    "tensor": "feats",
+    "equal": false,
+    "shape": [
+      3225,
+      32
+    ],
+    "max_abs_diff": 1.768019437789917
+  },
+  {
+    "call": "shape_slat_sampler#2",
+    "tensor": "coords",
+    "equal": false,
+    "shape": [
+      13755,
+      4
+    ],
+    "max_abs_diff": null,
+    "shape_b": [
+      13748,
+      4
+    ]
+  },
+  {
+    "call": "shape_slat_sampler#2",
+    "tensor": "feats",
+    "equal": false,
+    "shape": [
+      13755,
+      32
+    ],
+    "max_abs_diff": null,
+    "shape_b": [
+      13748,
+      32
+    ]
+  }
+]

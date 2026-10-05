@@ -1,0 +1,529 @@
+{
+  "runs": [
+    {
+      "mode": "eager",
+      "run": 1,
+      "exit": 0,
+      "stop_at": "texture"
+    },
+    {
+      "mode": "staged",
+      "run": 1,
+      "exit": 0
+    },
+    {
+      "mode": "eager",
+      "run": 2,
+      "exit": 0,
+      "stop_at": "texture"
+    },
+    {
+      "mode": "staged",
+      "run": 2,
+      "exit": 0,
+      "note": "built every model on the CPU first; kept in cpu-build/ as an experiment, not counted below"
+    },
+    {
+      "mode": "staged",
+      "run": 3,
+      "exit": 0,
+      "note": "the final loader again, started by hand with the same guard settings"
+    }
+  ],
+  "modes": {
+    "eager": {
+      "peak_footprint_gb": [
+        30.55,
+        30.53
+      ],
+      "swap_rise_gb": [
+        2.27,
+        3.87
+      ],
+      "seconds": [
+        351.0,
+        410.5
+      ],
+      "load_seconds": [
+        0,
+        0
+      ],
+      "stopped_at": [
+        "texture",
+        "texture"
+      ],
+      "stages": [
+        {
+          "setup": 20.41,
+          "preprocess": null,
+          "camera": 23.18,
+          "structure": 22.21,
+          "shape_512": 26.6,
+          "shape_1024": 30.55
+        },
+        {
+          "setup": 20.4,
+          "preprocess": null,
+          "camera": 23.18,
+          "structure": 22.21,
+          "shape_512": 26.6,
+          "shape_1024": 30.53
+        }
+      ]
+    },
+    "staged": {
+      "peak_footprint_gb": [
+        69.57,
+        70.19
+      ],
+      "swap_rise_gb": [
+        0.0,
+        2.03
+      ],
+      "seconds": [
+        595.9,
+        631.9
+      ],
+      "load_seconds": [
+        24.4,
+        23.8
+      ],
+      "stopped_at": [
+        null,
+        null
+      ],
+      "stages": [
+        {
+          "setup": 2.93,
+          "preprocess": null,
+          "camera": 6.72,
+          "structure": 10.9,
+          "shape_512": 11.46,
+          "shape_1024": 13.06,
+          "texture": 30.08,
+          "decode": 17.87,
+          "export": 69.57
+        },
+        {
+          "setup": 2.93,
+          "preprocess": 3.0,
+          "camera": 6.72,
+          "structure": 10.91,
+          "shape_512": 11.44,
+          "shape_1024": 13.06,
+          "texture": 30.1,
+          "decode": 18.35,
+          "export": 70.19
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "eager-1-eager-2": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 1.768019437789917
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13755,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13748,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13755,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13748,
+          32
+        ]
+      }
+    ],
+    "eager-1-staged-1": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 1.2445475608110428
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13755,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13740,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13755,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13740,
+          32
+        ]
+      }
+    ],
+    "eager-1-staged-3": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 1.8613942563533783
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13755,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13755,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          32
+        ]
+      }
+    ],
+    "eager-2-staged-1": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 1.8532441854476929
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13748,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13740,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13748,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13740,
+          32
+        ]
+      }
+    ],
+    "eager-2-staged-3": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 1.8198049664497375
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13748,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13748,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          32
+        ]
+      }
+    ],
+    "staged-1-staged-3": [
+      {
+        "call": "sparse_structure_sampler#1",
+        "tensor": "tensor",
+        "equal": true,
+        "shape": [
+          1,
+          8,
+          16,
+          16,
+          16
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "coords",
+        "equal": true,
+        "shape": [
+          3225,
+          4
+        ],
+        "max_abs_diff": 0.0
+      },
+      {
+        "call": "shape_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          3225,
+          32
+        ],
+        "max_abs_diff": 2.0380709171295166
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13740,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          4
+        ]
+      },
+      {
+        "call": "shape_slat_sampler#2",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13740,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          32
+        ]
+      },
+      {
+        "call": "tex_slat_sampler#1",
+        "tensor": "coords",
+        "equal": false,
+        "shape": [
+          13740,
+          4
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          4
+        ]
+      },
+      {
+        "call": "tex_slat_sampler#1",
+        "tensor": "feats",
+        "equal": false,
+        "shape": [
+          13740,
+          32
+        ],
+        "max_abs_diff": null,
+        "shape_b": [
+          13754,
+          32
+        ]
+      }
+    ]
+  }
+}
