@@ -14,6 +14,7 @@ from .release import ReleasedModuleError, module_nbytes, release
 from .rng import preserved_rng
 
 Loader = Callable[[], nn.Module]
+_NO_DEFAULT = object()
 
 
 @dataclass
@@ -32,9 +33,14 @@ class StagedModels(MutableMapping[str, nn.Module]):
     ``len`` and iteration over names never load anything, and ``values()``/``items()`` only
     yield models that are loaded right now.
 
-    With ``preserve_rng`` (the default) a load leaves the CPU, MPS and CUDA random generators
-    where they were, so a model built in the middle of a seeded run does not change the noise the
-    run draws next.
+    With ``preserve_rng`` (the default) a load leaves the random generators where they were (see
+    :func:`stageload.rng.preserved_rng`), so a model built in the middle of a seeded run does not
+    change the noise the run draws next.
+
+    ``models[name] = module`` stores a module that has no loader: once released, it stays gone.
+    ``del models[name]`` and ``clear()`` release without loading anything. ``pop`` and
+    ``popitem`` hand a model over: it comes back with its weights, loaded first if it was not,
+    and the registry forgets it without releasing it.
     """
 
     def __init__(
@@ -86,14 +92,40 @@ class StagedModels(MutableMapping[str, nn.Module]):
         return module
 
     def __setitem__(self, name: str, module: nn.Module) -> None:
-        if name in self._slots and self._slots[name].module is not None:
-            self._release(name)
+        slot = self._slots.get(name)
+        if slot is not None and slot.module is module:
+            return
+        if slot is not None and slot.module is not None:
+            # the new module may share weights with the one it replaces
+            self._release(name, keep=[module])
         self._slots[name] = _Slot(loader=None, module=module, loads=1)
 
     def __delitem__(self, name: str) -> None:
         if self._slots[name].module is not None:
             self._release(name)
         del self._slots[name]
+        self._pinned.discard(name)
+
+    def pop(self, name: str, default: Any = _NO_DEFAULT) -> Any:
+        if name not in self._slots:
+            if default is _NO_DEFAULT:
+                raise KeyError(name)
+            return default
+        module = self[name]
+        del self._slots[name]
+        self._pinned.discard(name)
+        return module
+
+    def popitem(self) -> tuple[str, nn.Module]:
+        if not self._slots:
+            raise KeyError("popitem(): no models")
+        name = next(reversed(self._slots))
+        return name, self.pop(name)
+
+    def clear(self) -> None:
+        self.close()
+        self._slots.clear()
+        self._pinned.clear()
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._slots)
@@ -136,13 +168,13 @@ class StagedModels(MutableMapping[str, nn.Module]):
             self._release(name)
         self.current_stage = None
 
-    def _release(self, name: str) -> None:
+    def _release(self, name: str, keep: Iterable[nn.Module] = ()) -> None:
         slot = self._slots[name]
         module = slot.module
         if module is None:
             return
         others = [s.module for n, s in self._slots.items() if n != name and s.module is not None]
-        stats = release(module, name=name, stage=self.current_stage, keep=others)
+        stats = release(module, name=name, stage=self.current_stage, keep=[*others, *keep])
         slot.module = None
         slot.released_at = self.current_stage
         self._emit(

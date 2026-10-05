@@ -130,6 +130,25 @@ def test_loading_a_model_does_not_change_the_random_numbers_that_follow():
     assert torch.equal(second, expected[1])
 
 
+
+def test_a_load_that_draws_from_python_and_numpy_leaves_them_where_they_were():
+    np = pytest.importorskip("numpy")
+    import random
+
+    def noisy():
+        random.random()
+        np.random.rand()
+        return nn.Linear(4, 4)
+
+    models = StagedModels({"a": noisy}, stages={"one": ["a"]})
+    random.seed(1)
+    np.random.seed(1)
+    models["a"]
+    after = (random.random(), np.random.rand())
+    random.seed(1)
+    np.random.seed(1)
+    assert after == (random.random(), np.random.rand())
+
 def test_random_state_can_be_left_alone_on_request():
     models = StagedModels(
         {"a": lambda: nn.Linear(64, 64)}, stages={"one": ["a"]}, preserve_rng=False
@@ -141,3 +160,65 @@ def test_random_state_can_be_left_alone_on_request():
     torch.manual_seed(0)
     torch.randn(3)
     assert not torch.equal(after_load, torch.randn(3))
+
+
+def test_assigning_the_model_it_already_holds_keeps_it_working():
+    models, _, _ = make("abc", STAGES)
+    model = models["a"]
+    models["a"] = model
+    assert models["a"] is model
+    model(torch.zeros(1, 4))
+
+
+def test_a_replacement_that_shares_weights_keeps_them():
+    models, _, _ = make("abc", STAGES)
+    old = models["a"]
+    new = nn.Linear(4, 4)
+    new.weight = old.weight
+    models["a"] = new
+    assert new.weight.device.type == "cpu"
+    assert old.bias.device.type == "meta"
+    new(torch.zeros(1, 4))
+
+
+def test_pop_hands_over_a_live_model_and_forgets_it():
+    models, built, _ = make("abc", STAGES, pinned=["a"])
+    loaded = models["a"]
+    assert models.pop("a") is loaded
+    loaded(torch.zeros(1, 4))
+    popped = models.pop("b")
+    assert built == ["a", "b"]
+    popped(torch.zeros(1, 4))
+    assert "a" not in models and "b" not in models
+    assert models.pop("missing", None) is None
+    with pytest.raises(KeyError):
+        models.pop("missing")
+    models.enter("three")
+
+
+def test_popitem_takes_the_last_model():
+    models, _, _ = make("ab", {"one": ["a", "b"]})
+    name, model = models.popitem()
+    assert name == "b"
+    model(torch.zeros(1, 4))
+    assert list(models) == ["a"]
+
+
+def test_clear_releases_loaded_models_and_loads_nothing():
+    models, built, sink = make("abc", STAGES)
+    loaded = models["a"]
+    models.clear()
+    assert built == ["a"]
+    assert len(models) == 0
+    assert [e.kind for e in sink.events] == ["load", "release"]
+    with pytest.raises(ReleasedModuleError):
+        loaded(torch.zeros(1, 4))
+
+
+def test_deleting_a_pinned_model_unpins_it():
+    models, _, _ = make("abc", STAGES, pinned=["a"])
+    models["a"]
+    del models["a"]
+    models["a"] = nn.Linear(4, 4)
+    models.enter("two")
+    assert "a" not in models.loaded()
