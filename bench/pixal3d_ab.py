@@ -27,7 +27,8 @@ BUSY = (
 
 
 def run_one(python: str, image: Path, out: Path, mode: str, run: int, port: str | None,
-            stop_at: str | None = None, fingerprints: bool = False) -> int:
+            stop_at: str | None = None, fingerprints: bool = False,
+            start_timeout: str = "30m") -> int:
     busy = [arg for pattern in BUSY for arg in ("--busy", pattern)]
     target = [
         python, "-m", "stageload.pixal3d", str(image), "-o", str(out / f"{mode}-{run}.glb"),
@@ -41,7 +42,8 @@ def run_one(python: str, image: Path, out: Path, mode: str, run: int, port: str 
         target += ["--fingerprint", str(out / f"fp-{mode}-{run}")]
     cmd = [
         "nice", "-n", "15", python, "-m", "stageload", "guard", "--wait-free", "40",
-        "--swap-budget", "8G", *busy, "--", "nice", "-n", "15", *target,
+        "--swap-budget", "8G", "--start-timeout", start_timeout, *busy,
+        "--", "nice", "-n", "15", *target,
     ]
     with (out / f"{mode}-{run}.log").open("w") as log:
         return subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
@@ -56,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--eager-stop-at", default=None, metavar="STAGE")
     parser.add_argument("--fingerprints", action="store_true")
+    parser.add_argument("--start-timeout", default="30m",
+                        help="how long each run may wait for room and for other heavy jobs")
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -63,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         for mode in ("eager", "staged"):
             stop_at = args.eager_stop_at if mode == "eager" else None
             code = run_one(args.python, args.image, args.out, mode, run, args.port, stop_at,
-                           args.fingerprints)
+                           args.fingerprints, args.start_timeout)
             runs.append({"mode": mode, "run": run, "exit": code})
             (args.out / "runs.json").write_text(json.dumps(runs, indent=2) + "\n")
             if code != 0:
