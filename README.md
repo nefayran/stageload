@@ -2,7 +2,7 @@
 
 Run multi-stage PyTorch pipelines on Apple Silicon with only the current stage's weights in memory.
 
-![Process footprint over time: eager loading against staged loading](bench/results/2026-10-05/memory.png)
+![Peak footprint per stage of Pixal3D on a 48 GB Mac, eager loading against staged loading](bench/results/2026-10-05/stages.png)
 
 ## Why
 
@@ -26,36 +26,51 @@ Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two run
 | stage | eager, peak footprint | staged, peak footprint |
 |---|---|---|
 | setup | 20.4 GB | 2.9 GB |
+| camera | 23.2 GB | 6.7 GB |
 | structure | 22.2 GB | 10.9 GB |
 | shape_512 | 26.6 GB | 11.5 GB |
 | shape_1024 | 30.5 GB | 13.1 GB |
-| texture | stopped by the guard at 44.2 GB, 6 % of memory available | 30.1 GB |
+| texture | stopped by the guard at 44.2 GB (a run on 2026-10-04) | 30.1 GB |
 | decode | – | 17.9 to 18.4 GB |
 | export | – | 69.6 to 70.2 GB |
 
 - Eager loading did not get through the texture stage on this machine. Within 10 s of entering
   it the footprint rose from 27 to 44 GB, available memory fell to 6 % and swap reached 27 GB,
   12 GB more than when the run started, so the guard stopped it. The other eager numbers come
-  from runs stopped where the texture stage begins. Both staged runs finished, in about ten minutes each, of which 24 s went to
-  loading models.
+  from runs stopped where the texture stage begins. Both staged runs finished, in about ten
+  minutes each, of which 24 s went to loading models.
+- Most of the texture stage's 30 GB is working memory, not weights: the texture model is 2.6 GB.
+  When decoding began, releasing it and emptying the MPS allocator's cache brought the footprint
+  down to 4.5 GB in one run and 8.0 GB in the other within two seconds.
 - The highest staged footprint is the port's own mesh export, after every weight has been
   released; stageload does not change it.
 - Output: the first latent (the sparse structure) is the same bit for bit in every run. From the
-  first sparse stage on, Pixal3D-mac does not repeat itself on MPS even with the same seed: two
-  eager runs differ by up to 1.77 in the 512 shape latent, and staged runs differ from eager runs
-  by 1.24 to 1.86, within the same spread.
+  next stage on, Pixal3D-mac does not repeat itself on MPS even with the same seed: the one pair
+  of eager runs differed by 1.77 in the 512 shape latent, and staged runs differ from eager runs
+  by 1.24 to 1.86. That shows any change from staged loading is no larger than the port's own
+  variation; it cannot show there is none.
+
+A staged run on a character image, rendered in Blender ([`bench/render_glb.py`](bench/render_glb.py)):
+
+![The input image and the generated model](docs/images/input-output.png)
+
+The footprint over time, for an eager run stopped where the texture stage begins, the eager run
+the guard stopped, and a staged run:
+
+![Process footprint over time: eager loading against staged loading](bench/results/2026-10-05/memory.png)
 
 ## How it works
 
 - `StagedModels` is a dictionary of models that loads each one on first access. `enter(stage)`
   releases every loaded model the stage does not list. Checking `name in models`, `len()` and
   iterating names never load anything.
-- Loading a model leaves the CPU, MPS and CUDA random generators where they were. A pipeline
-  that seeds once and draws noise stage by stage would otherwise get different noise, and a
-  different result, as soon as a model is built in the middle of the run.
+- Loading a model leaves the random generators where they were: torch's CPU, MPS and CUDA
+  generators, Python's `random` and NumPy's global one. A pipeline that seeds once and draws noise
+  stage by stage would otherwise get different noise, and a different result, as soon as a model
+  is built in the middle of the run.
 - `release(module)` moves every parameter and buffer to `meta`, collects garbage and empties the
-  MPS cache. A released module raises `ReleasedModuleError` with its name and the stage that
-  released it, instead of PyTorch's error about meta tensors.
+  MPS cache. Calling a released module raises `ReleasedModuleError` with its name and the stage
+  that released it, instead of PyTorch's error about meta tensors.
 - `on_call(obj, method, before=..., after=...)` marks stage boundaries on an existing pipeline
   object, so its own `run()` executes unchanged.
 - `share(owner, "from_pretrained")` makes identical loads return one instance for the duration of
@@ -67,11 +82,12 @@ Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two run
 ## Pixal3D-mac
 
 Install [Pixal3D-mac](https://github.com/pawel-mazurkiewicz/Pixal3D-mac) with its own README, then
-add stageload to the port's environment without touching its packages:
+add stageload to the port's environment without touching its packages, and run it from there:
 
 ```bash
-~/local-llm/Pixal3D-mac/.venv/bin/pip install --no-deps git+https://github.com/nefayran/stageload
-stageload-pixal3d photo.png -o photo.glb
+cd path/to/Pixal3D-mac
+.venv/bin/pip install --no-deps git+https://github.com/nefayran/stageload
+.venv/bin/stageload-pixal3d photo.png -o photo.glb
 ```
 
 `--load eager` runs the port's own loading for comparison. Flags, stages and the bench are in
@@ -91,8 +107,16 @@ It waits until `kern.memorystatus_level` is at least `--wait-free` percent and n
 a `--busy` pattern for `--quiet-for` (a minute by default, so the gap between two jobs of a chain
 does not count as quiet), then runs the command. It stops the command if swap grows more than
 `--swap-budget` over what was used at the start, or if available memory stays under `--kill-free`
-(10 %) for two samples. Exit code 3 means the guard stopped the command, 4 means it never found room
-to start it; otherwise you get the command's own exit code.
+(10 %) for two samples.
+
+Exit code 3 means the guard stopped the command, 4 that it never found room to start it, and 127
+that the command could not be started. If the guard itself gets Ctrl-C, SIGTERM or SIGHUP, it
+stops the command first and exits with 128 plus the signal number. Otherwise you get the command's
+own exit code, or 128 plus the signal number if a signal ended it.
+
+The `--busy` patterns match whole command lines, like `pgrep -f`. The guard leaves itself and the
+shells that started it out, but any other process whose command line contains a pattern counts,
+a shell running a script that mentions it included.
 
 For a safety net across the whole machine, see
 [macos-oom-guard](https://github.com/fl4p/macos-oom-guard), a root daemon that kills the largest
@@ -101,14 +125,18 @@ process before the kernel panics. The two do different jobs and can run together
 ## Use it in your own pipeline
 
 ```python
+import torch
 from safetensors.torch import load_file
 from stageload import StagedModels
 
-def loader(cls, path):          # cls: one of your nn.Module classes
+DEVICE = "mps"
+
+def loader(cls, path):             # cls: one of your nn.Module classes
     def load():
-        model = cls()
-        model.load_state_dict(load_file(path))
-        return model.to("mps").eval()
+        with torch.device(DEVICE):  # built on the GPU, with no second copy on the CPU
+            model = cls()
+        model.load_state_dict(load_file(path, device=DEVICE))
+        return model.eval()
     return load
 
 models = StagedModels(
@@ -128,12 +156,16 @@ models.close()
 
 - The meter and the guard read macOS counters (`libproc`, `sysctl`). The registry and `release`
   work wherever PyTorch runs.
-- One adapter so far: Pixal3D-mac, tested at commit `0be9e69`.
+- One adapter so far: Pixal3D-mac, tested at commit `0be9e69`, and staged loading has a plan for
+  its `1024_cascade` pipeline only.
 - A staged Pixal3D pipeline serves one image; the command builds a new one per image.
+- stageload builds Pixal3D's models directly on MPS, where the port builds them on the CPU. The
+  sparse attention's rotary frequencies, computed when a model is built, then come out slightly
+  different (up to 6e-8 apart). Because the port does not repeat its sparse stages on MPS with the
+  same seed, a staged result can only be checked against eager within that run-to-run spread,
+  and the texture latent and the final GLB were not compared at all.
 - The meter samples from a thread inside the process. While native code holds the interpreter
   lock it takes no samples, so a short peak inside such a call can be missed.
-- Pixal3D-mac does not repeat its sparse stages on MPS with the same seed, so a staged result can
-  only be checked against eager within that run-to-run spread.
 
 ## License
 

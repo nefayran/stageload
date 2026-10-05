@@ -12,34 +12,38 @@ models are loaded and released.
 2. Install stageload into the port's environment without touching its packages:
 
    ```bash
-   ~/local-llm/Pixal3D-mac/.venv/bin/pip install --no-deps git+https://github.com/nefayran/stageload
+   cd path/to/Pixal3D-mac
+   .venv/bin/pip install --no-deps git+https://github.com/nefayran/stageload
    ```
 
-3. If the port is not at `~/local-llm/Pixal3D-mac`, pass `--port DIR` or set `PIXAL3D_MAC_DIR`.
+3. Run the command from the port's environment, which has torch and the port's other packages.
+   It looks for the port in `--port DIR`, then `$PIXAL3D_MAC_DIR`, then the checkout whose
+   `.venv` runs it, then the current directory.
 
 ## Run
 
 ```bash
-stageload-pixal3d photo.png -o photo.glb
-stageload-pixal3d photo.png -o photo.glb --load eager     # the port's own loading, for comparison
+.venv/bin/stageload-pixal3d photo.png -o photo.glb
+.venv/bin/stageload-pixal3d photo.png -o photo.glb --load eager   # the port's own loading
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--load staged\|eager` | `staged` | staged loading, or the port's `load_pipeline` untouched |
-| `--pipeline` | `1024_cascade` | passed to the port as `--pipeline-type` |
+| `--pipeline` | `1024_cascade` | passed to the port as `--pipeline-type`; staged loading has a plan for `1024_cascade` only |
 | `--seed` | `7` | passed to the port |
 | `--texture-size` | `2048` | passed to the port |
 | `--trace FILE` | next to the output | the JSONL trace of this run |
-| `--port DIR` | `$PIXAL3D_MAC_DIR`, then `~/local-llm/Pixal3D-mac` | the port checkout |
-| `--stop-at STAGE` | none | end the run where that stage would begin; no GLB is written |
+| `--port DIR` | see Install | the port checkout |
+| `--stop-at STAGE` | none | end the run where that stage would begin (any stage after `setup`); no GLB is written |
 | `--fingerprint DIR` | none | save a hash and a copy of every sampler's output |
 
 Any other flag goes to the port's own argument parser, so its defaults and checks apply.
 
 Refused in both modes, because they select other branches of the port's `main()` that this
 command does not repeat: `--flash-sdpa`, `--load-mesh`, `--load-fixture-07`, and
-`--free-spent-models` where a local copy of the port has it. Run `generate_mps.py` for those.
+`--free-spent-models` where a local copy of the port has it. They are checked after the port has
+parsed them, so abbreviations such as `--flash` are refused too. Run `generate_mps.py` for those.
 
 Refused in staged mode only: the port's diagnostic switches `PIXAL3D_FP32_MODELS`,
 `PIXAL3D_CPU_MODELS`, `PIXAL3D_NAF_ANE_REPLACE`, `PIXAL3D_NAF_ANE_WHOLE`, `PIXAL3D_NAF_METAL` and
@@ -49,7 +53,7 @@ Refused in staged mode only: the port's diagnostic switches `PIXAL3D_FP32_MODELS
 
 | Stage | Begins when | In memory |
 |---|---|---|
-| setup | the command starts | nothing yet; the pipeline is built without reading any of its seven models |
+| setup | the command starts | RMBG-2, one DINOv3 backbone and one NAF model; none of the pipeline's seven models is read yet |
 | preprocess | `preprocess_image` is called | RMBG-2, released when it returns |
 | camera | `preprocess_image` returns | MoGe-2, loaded and freed by the port |
 | structure | `get_proj_cond_ss` is called | DINOv3, `sparse_structure_flow_model`, `sparse_structure_decoder` |
@@ -80,33 +84,51 @@ prints the peak footprint overall and per stage, swap at the start, peak and end
 and the bytes and seconds spent loading models. A model that was loaded outside the stage the plan
 gives it is listed under `outside_stage`.
 
-## Check that staged loading changes nothing
+## Check what staged loading changes
 
 The port seeds once at the start of `run()` and draws every stage's noise from the CPU random
 generator. Building a model runs its random initialisation, so a model built in the middle of the
-run would change the noise of every later stage. `StagedModels` saves and restores the CPU, MPS
-and CUDA generator states around each load, so a staged run draws exactly the noise an eager run
-draws.
+run would change the noise of every later stage. `StagedModels` saves and restores the random
+generators around each load (torch's CPU, MPS and CUDA ones, Python's `random` and NumPy's global
+one), so a staged run draws the noise an eager run draws.
+
+One thing does differ. The port builds its models on the CPU and moves them to MPS; stageload
+builds them on MPS, which avoids a second copy during every load. A tensor a model computes when
+it is built, rather than reads from its checkpoint, can then come out slightly different: the
+sparse attention's rotary frequencies differ by up to 6e-8. Building on the CPU instead cost 2.6
+to 11.7 GB more in four stages and more than tripled the loading time, without bringing the
+results measurably closer ([bench/results/2026-10-05](../bench/results/2026-10-05/README.md)).
 
 `--fingerprint DIR` hashes the output of every sampler call (sparse structure, the low- and
 high-resolution shape latents, the texture latent) and saves a copy, and
 `bench/compare_fingerprints.py A B` compares two runs call by call. Together with `--stop-at`, this
 also works when eager loading does not fit in memory: stop the eager runs where the texture stage
-would begin and compare the stages before it.
+would begin and compare the stages before it. On MPS the port does not repeat its sparse stages
+with the same seed, so the comparison shows how far apart two runs are, not whether staged loading
+changed anything. The texture latent and the GLB have not been compared on this machine, because
+the eager runs do not get through the texture stage here.
 
 ## Compare eager and staged
 
+In a clone of this repository, with its own `.venv` (`pip install -e ".[test,bench]"`):
+
 ```bash
-.venv/bin/python bench/pixal3d_ab.py --python ~/local-llm/Pixal3D-mac/.venv/bin/python \
-  --image photo.png --out bench/results/my-run --runs 2 --fingerprints \
-  --eager-stop-at texture          # only where eager loading does not fit
-.venv/bin/python bench/compare_fingerprints.py bench/results/my-run/fp-eager-1 bench/results/my-run/fp-staged-1
-.venv/bin/python bench/compare_glb.py bench/results/my-run/eager-1.glb bench/results/my-run/staged-1.glb
-.venv/bin/python bench/summarize_runs.py bench/results/my-run
-.venv/bin/python bench/plot_trace.py bench/results/my-run/eager-1.trace.jsonl \
-  bench/results/my-run/staged-1.trace.jsonl --out bench/results/my-run/memory
+R=bench/results/my-run
+.venv/bin/python bench/pixal3d_ab.py --python path/to/Pixal3D-mac/.venv/bin/python \
+  --image photo.png --out $R --runs 2 --fingerprints \
+  --eager-stop-at texture \
+  --busy 'ltx-2-mlx'                  # other heavy jobs of the machine to wait for
+.venv/bin/python bench/compare_fingerprints.py $R/fp-eager-1 $R/fp-staged-1
+.venv/bin/python bench/summarize_runs.py $R
+.venv/bin/python bench/plot_stages.py $R/summary.json --out $R/stages
+.venv/bin/python bench/plot_trace.py $R/eager-1.trace.jsonl $R/staged-1.trace.jsonl --out $R/memory
 ```
 
+Leave out `--eager-stop-at texture` where eager loading fits in memory; the eager runs then write
+a GLB too, and `bench/compare_glb.py $R/eager-1.glb $R/staged-1.glb` compares the meshes and
+their textures.
+
 Each generation runs in its own process under `stageload guard`, one after another, eager and
-staged in turn. The driver stops at the first run that does not finish, so a run the guard had to
-stop is never followed by another one.
+staged in turn. Every run waits until no other Pixal3D run is going and, with `--busy`, until
+the machine's other heavy jobs have been quiet for three minutes. The driver stops at the first
+run that does not finish, so a run the guard had to stop is never followed by another one.

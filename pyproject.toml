@@ -13,7 +13,7 @@ authors = [{ name = "Rodion Kazennov" }]
 dependencies = ["torch>=2.1"]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "ruff>=0.6", "numpy>=1.24", "pillow>=10"]
+test = ["pytest>=7", "ruff>=0.6", "numpy>=1.24", "pillow>=10", "safetensors>=0.4"]
 bench = ["numpy>=1.24", "trimesh>=4", "matplotlib>=3.7", "pillow>=10"]
 
 [project.scripts]
