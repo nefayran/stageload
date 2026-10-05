@@ -1,4 +1,5 @@
 import shutil
+import sys
 
 import pytest
 
@@ -49,3 +50,10 @@ def test_find_port_explains_where_it_looked(tmp_path, monkeypatch):
 def test_diagnostic_switches_are_listed():
     environ = {"PIXAL3D_CPU_MODELS": "tex_slat_decoder", "PIXAL3D_FP32_MODELS": " ", "HOME": "/x"}
     assert diagnostic_switches(environ) == ["PIXAL3D_CPU_MODELS"]
+
+
+def test_find_port_uses_the_checkout_whose_venv_runs_python(fake_port_dir, tmp_path, monkeypatch):
+    monkeypatch.delenv("PIXAL3D_MAC_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "prefix", str(fake_port_dir / ".venv"))
+    assert find_port(None) == fake_port_dir.resolve()

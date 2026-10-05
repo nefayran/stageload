@@ -75,10 +75,12 @@ class Port:
 
 
 def find_port(explicit: str | os.PathLike[str] | None = None) -> Path:
+    """The port checkout: ``explicit``, else ``$PIXAL3D_MAC_DIR``, else the checkout whose
+    ``.venv`` runs this Python, else the current directory."""
     candidates = (
         [explicit]
         if explicit
-        else [os.environ.get("PIXAL3D_MAC_DIR"), str(Path.home() / "local-llm" / "Pixal3D-mac")]
+        else [os.environ.get("PIXAL3D_MAC_DIR"), str(Path(sys.prefix).parent), os.getcwd()]
     )
     for candidate in candidates:
         if candidate and (Path(candidate).expanduser() / "generate_mps.py").is_file():
