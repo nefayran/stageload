@@ -24,11 +24,15 @@ Nothing in the core knows about Pixal3D. A pipeline needs three things: a functi
 each model on its own, the list of models each stage uses, and a call where each stage begins.
 In code you own, that call is `models.enter("decode")`; in code you don't, `on_call` attaches it
 to a method that already runs at that point, and the pipeline stays as it is. A text-to-image
-pipeline (a text encoder, a denoiser and an image decoder, one after another) has the same shape.
-Pixal3D-mac is the first adapter and the only pipeline measured so far;
-[Use it in your own pipeline](#use-it-in-your-own-pipeline) shows the core on two models.
+pipeline (a text encoder, a denoiser and an image decoder, one after another) has the same shape;
+Qwen-Image-2.1 through diffusers is the second pipeline measured
+([results](#qwen-image-21-through-diffusers)). Pixal3D-mac is the first adapter;
+[`bench/qwen_image.py`](bench/qwen_image.py) wires a diffusers pipeline without changing its
+code, and [Use it in your own pipeline](#use-it-in-your-own-pipeline) shows the core on two models.
 
 ## Results
+
+### Pixal3D
 
 Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two runs per mode
 ([details and traces](bench/results/2026-10-05/README.md)):
@@ -68,6 +72,30 @@ The footprint over time, for an eager run stopped where the texture stage begins
 the guard stopped, and a staged run:
 
 ![Process footprint over time: eager loading against staged loading](bench/results/2026-10-05/memory.png)
+
+### Qwen-Image-2.1 through diffusers
+
+Text to image at 1024 x 1024, 20 steps, seed 7, on the same Mac
+([details and traces](bench/results/2026-10-06-qwen-image/README.md)). Eager is the usual
+`QwenImage21Pipeline.from_pretrained(...).to("mps")`. Staged keeps the VAE and loads the text
+encoder (16.3 GB) and the transformer (13.3 GB) one at a time; the pipeline's code is unchanged.
+
+![Peak footprint per stage of Qwen-Image-2.1 on a 48 GB Mac, eager loading against staged loading](bench/results/2026-10-06-qwen-image/stages.png)
+
+| stage | eager, peak footprint | staged, peak footprint |
+|---|---|---|
+| load | 31.4 GB | 2.1 GB |
+| encode | 31.4 GB | 19.0 GB |
+| denoise | 32.5 GB | 16.2 to 18.6 GB |
+| decode | stopped by the guard at 43.6 GB | 14.4 GB |
+
+- Eager ran all 20 steps. The VAE decode then took its footprint from 32.5 to 43.6 GB and swap
+  grew by 8 GB, so the guard stopped it before it wrote an image. Staged released the transformer
+  before the decode, and its swap did not grow in either of its two runs.
+- A step costs the same: the second staged run's denoising took 79 s, eager's 77 s. Staged spent
+  13 s loading the two models.
+- The two staged runs produced the same image, bit for bit. Eager produced none, so these runs do
+  not show that both modes give the same image.
 
 ## How it works
 
@@ -172,6 +200,8 @@ models.close()
 - One adapter so far: Pixal3D-mac, tested at commit `0be9e69`, and staged loading has a plan for
   its `1024_cascade` pipeline only.
 - A staged Pixal3D pipeline serves one image; the command builds a new one per image.
+- The Qwen-Image wiring is a bench script for one pipeline, run with diffusers from main
+  (0.41.0.dev0), not a packaged adapter.
 - stageload builds Pixal3D's models directly on MPS, where the port builds them on the CPU. The
   sparse attention's rotary frequencies, computed when a model is built, then come out slightly
   different (up to 6e-8 apart). Because the port does not repeat its sparse stages on MPS with the

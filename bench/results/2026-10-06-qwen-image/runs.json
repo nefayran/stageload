@@ -1,0 +1,5 @@
+[
+  {"mode": "eager", "run": 1, "exit": 3},
+  {"mode": "staged", "run": 1, "exit": 0},
+  {"mode": "staged", "run": 2, "exit": 0}
+]

@@ -1,0 +1,83 @@
+{
+  "runs": [
+    {
+      "mode": "eager",
+      "run": 1,
+      "exit": 3
+    },
+    {
+      "mode": "staged",
+      "run": 1,
+      "exit": 0
+    },
+    {
+      "mode": "staged",
+      "run": 2,
+      "exit": 0
+    }
+  ],
+  "modes": {
+    "eager": {
+      "peak_footprint_gb": [
+        43.57
+      ],
+      "swap_rise_gb": [
+        7.97
+      ],
+      "seconds": [
+        118.4
+      ],
+      "load_seconds": [
+        0
+      ],
+      "stopped_at": [
+        "decode"
+      ],
+      "stages": [
+        {
+          "setup": 31.4,
+          "encode": 31.44,
+          "denoise": 32.52,
+          "decode": 43.57
+        }
+      ]
+    },
+    "staged": {
+      "peak_footprint_gb": [
+        19.0,
+        19.0
+      ],
+      "swap_rise_gb": [
+        0.0,
+        0.0
+      ],
+      "seconds": [
+        124.3,
+        94.3
+      ],
+      "load_seconds": [
+        12.6,
+        13.0
+      ],
+      "stopped_at": [
+        null,
+        null
+      ],
+      "stages": [
+        {
+          "setup": 2.08,
+          "encode": 19.0,
+          "denoise": 16.2,
+          "decode": 14.41
+        },
+        {
+          "setup": 2.08,
+          "encode": 19.0,
+          "denoise": 18.62,
+          "decode": 14.43
+        }
+      ]
+    }
+  },
+  "comparisons": {}
+}
