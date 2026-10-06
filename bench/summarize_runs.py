@@ -14,16 +14,21 @@ GB = 2**30
 
 def collect(results: Path) -> dict[str, Any]:
     runs = json.loads((results / "runs.json").read_text())
+    exits = {f"{r['mode']}-{r['run']}": r["exit"] for r in runs}
     modes: dict[str, dict[str, list[Any]]] = {}
     for trace in sorted(results.glob("*.trace.jsonl")):
         s = summarize(read_trace(trace))
         mode = s["meta"].get("mode", trace.stem.split("-")[0])
+        stopped = s["meta"].get("stop_at")
+        if stopped is None and exits.get(trace.name.removesuffix(".trace.jsonl"), 0) != 0:
+            # stopped from outside, by the guard: in the stage its trace ends in
+            stopped = s["stages"][-1]["stage"] if s["stages"] else "start"
         entry = modes.setdefault(
             mode,
             {"peak_footprint_gb": [], "swap_rise_gb": [], "seconds": [], "load_seconds": [],
              "stopped_at": [], "stages": []},
         )
-        entry["stopped_at"].append(s["meta"].get("stop_at"))
+        entry["stopped_at"].append(stopped)
         entry["peak_footprint_gb"].append(round(s["peak_footprint"] / GB, 2))
         entry["swap_rise_gb"].append(round((s["swap"]["peak"] - s["swap"]["start"]) / GB, 2))
         entry["seconds"].append(round(s["duration"], 1))
