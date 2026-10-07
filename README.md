@@ -187,6 +187,43 @@ For a safety net across the whole machine, see
 [macos-oom-guard](https://github.com/fl4p/macos-oom-guard), a root daemon that kills the largest
 process before the kernel panics. The two do different jobs and can run together.
 
+## One queue for the machine
+
+`stageload guard` decides alone. Two guards that find room at the same moment both start, and a
+guard can start in the gap between two jobs of another session's chain: on 2026-10-05 a run
+started in such a gap, and the next video job took swap past its budget within 20 s. When several
+agents or scripts share one Mac, start the heavy commands with `stageload run` instead. It takes
+the guard's flags:
+
+```bash
+stageload run --who sayu-ltx -- ltx-2-mlx --distilled ...
+```
+
+- The command joins a lane, `ram` unless `--lane` names another, under `STAGELOAD_HOME`
+  (`~/.stageload` by default). It starts once every older command of its lane has finished and
+  it holds the lane's lock; then the guard's memory checks run as usual. Lanes do not wait for
+  each other, so jobs bound by a remote quota (`--lane codex`) stay apart from the ones that need
+  memory.
+- The command inherits the lane's lock, so the lane stays taken while it runs even if the process
+  that queued it is killed with SIGKILL.
+- Patterns in `~/.stageload/busy.txt`, one per line, are added to every run's `--busy`, so all
+  sessions wait for the same engines started outside the queue.
+- Each run writes a memory trace (by default under `~/.stageload/traces`; `--trace PATH`,
+  `--no-trace`) with the footprint of the command and of every process under it, and appends one
+  line to `~/.stageload/history.jsonl`: who, exit code, seconds waited and run, peak footprint and
+  swap.
+- `--who` defaults to `$STAGELOAD_WHO`, `--start-timeout` to 24 hours and `--quiet-for` to 20 s,
+  since waiting in the queue is the normal case. Exit codes are the guard's.
+
+`stageload queue` shows what runs and what waits; `--history 10` adds the last ten finished runs,
+`--json` prints JSON.
+
+```
+$ stageload queue
+ram     0 running  sayu-ltx             pid 4242    since 2026-10-07T12:01:00+00:00  ltx-2-mlx --distilled ...
+ram     1 waiting  haraiya-rife         pid 4310    since 2026-10-07T12:03:12+00:00  rife-ncnn-vulkan ...
+```
+
 ## Use it in your own pipeline
 
 ```python

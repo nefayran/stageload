@@ -1,11 +1,13 @@
-"""`stageload guard` and `stageload summary`."""
+"""`stageload guard`, `stageload run`, `stageload queue` and `stageload summary`."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 from .guard import GuardConfig, run_guarded
@@ -48,54 +50,76 @@ def _regex(text: str) -> str:
     return text
 
 
+def _memory_flags(parser: argparse.ArgumentParser, *, quiet_for: str, start_timeout: str) -> None:
+    """The flags `guard` and `run` share, so a script moves from one to the other by one word."""
+    parser.add_argument(
+        "--wait-free", type=_percent, default=40, metavar="PERCENT",
+        help="memory available before starting (default 40)",
+    )
+    parser.add_argument(
+        "--swap-budget", type=_arg(parse_size), default="8G",
+        help="swap the command may add over what was used at its start (default 8G)",
+    )
+    parser.add_argument(
+        "--swap-limit", type=_arg(parse_size), default=None,
+        help="absolute swap ceiling, also checked before starting",
+    )
+    parser.add_argument(
+        "--kill-free", type=_percent, default=10, metavar="PERCENT",
+        help="stop the command after two samples under this (default 10)",
+    )
+    parser.add_argument(
+        "--busy", action="append", type=_regex, default=[], metavar="REGEX",
+        help="do not start while a process matches (repeatable)",
+    )
+    parser.add_argument(
+        "--quiet-for", type=_arg(parse_duration), default=quiet_for,
+        help=f"with --busy: start only after no busy process was seen for this long "
+        f"(default {quiet_for})",
+    )
+    parser.add_argument("--start-timeout", type=_arg(parse_duration), default=start_timeout)
+    parser.add_argument("--poll", type=_positive_duration, default="5s")
+    parser.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command ...")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stageload")
     sub = parser.add_subparsers(dest="command", required=True)
     guard = sub.add_parser(
         "guard", help="run one command when there is room and stop it before swap runs away"
     )
-    guard.add_argument(
-        "--wait-free", type=_percent, default=40, metavar="PERCENT",
-        help="memory available before starting (default 40)",
+    _memory_flags(guard, quiet_for="1m", start_timeout="30m")
+    run = sub.add_parser(
+        "run",
+        help="queue a heavy command behind the others of its lane, then run it like guard, "
+        "metered",
     )
-    guard.add_argument(
-        "--swap-budget", type=_arg(parse_size), default="8G",
-        help="swap the command may add over what was used at its start (default 8G)",
+    _memory_flags(run, quiet_for="20s", start_timeout="24h")
+    run.add_argument(
+        "--who", default=os.environ.get("STAGELOAD_WHO", ""),
+        help="who queued it, shown by `stageload queue` (default $STAGELOAD_WHO)",
     )
-    guard.add_argument(
-        "--swap-limit", type=_arg(parse_size), default=None,
-        help="absolute swap ceiling, also checked before starting",
+    run.add_argument(
+        "--lane", default="ram",
+        help="commands of one lane run one at a time; lanes do not wait for each other "
+        "(default ram)",
     )
-    guard.add_argument(
-        "--kill-free", type=_percent, default=10, metavar="PERCENT",
-        help="stop the command after two samples under this (default 10)",
+    traced = run.add_mutually_exclusive_group()
+    traced.add_argument("--trace", type=Path, help="where to write the memory trace")
+    traced.add_argument("--no-trace", action="store_true", help="do not meter the command")
+    queue = sub.add_parser("queue", help="show the running and waiting commands")
+    queue.add_argument("--lane", help="only this lane")
+    queue.add_argument("--json", action="store_true", help="print JSON")
+    queue.add_argument(
+        "--history", type=int, default=0, metavar="N", help="also show the last N finished runs"
     )
-    guard.add_argument(
-        "--busy", action="append", type=_regex, default=[], metavar="REGEX",
-        help="do not start while a process matches (repeatable)",
-    )
-    guard.add_argument(
-        "--quiet-for", type=_arg(parse_duration), default="1m",
-        help="with --busy: start only after no busy process was seen for this long (default 1m)",
-    )
-    guard.add_argument("--start-timeout", type=_arg(parse_duration), default="30m")
-    guard.add_argument("--poll", type=_positive_duration, default="5s")
-    guard.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command ...")
     summary = sub.add_parser("summary", help="print the summary of a trace file as JSON")
     summary.add_argument("trace")
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = _parser()
-    args = parser.parse_args(argv)
-    if args.command == "summary":
-        print(json.dumps(summarize(read_trace(args.trace)), indent=2))
-        return 0
-    cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
-    if not cmd:
-        parser.error("guard needs a command after --")
-    config = GuardConfig(
+def _config(args: argparse.Namespace) -> GuardConfig:
+    return GuardConfig(
         wait_free=args.wait_free,
         swap_budget=args.swap_budget,
         swap_limit=args.swap_limit,
@@ -105,4 +129,52 @@ def main(argv: Sequence[str] | None = None) -> int:
         start_timeout=args.start_timeout,
         poll=args.poll,
     )
-    return run_guarded(cmd, config)
+
+
+def _gb(nbytes: int | None) -> str:
+    return "-" if not nbytes else f"{nbytes / 2**30:.1f} GB"
+
+
+def _show_queue(args: argparse.Namespace) -> int:
+    from .queue import default_home, list_queue
+
+    home = default_home()
+    rows = list_queue(home, args.lane)
+    history = []
+    if args.history > 0 and (home / "history.jsonl").exists():
+        lines = (home / "history.jsonl").read_text(encoding="utf-8").splitlines()
+        history = [json.loads(line) for line in lines[-args.history :] if line.strip()]
+    if args.json:
+        print(json.dumps({"queue": rows, "history": history} if args.history else rows, indent=2))
+        return 0
+    if not rows:
+        print("queue: empty")
+    for row in rows:
+        print(f"{row['lane']:6} {row['position']:>2} {row['state']:8} {row['who'] or '-':20} "
+              f"pid {row['pid']:<7} since {row['since']}  {row['cmd'][:80]}")
+    for record in history:
+        print(f"done   {record['lane']:6} exit {record['exit']:<4} {record['who'] or '-':20} "
+              f"waited {record['waited_s']:.0f} s, ran {record['run_s']:.0f} s, "
+              f"peak {_gb(record['peak_footprint'])}  {record['cmd'][:60]}")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.command == "summary":
+        print(json.dumps(summarize(read_trace(args.trace)), indent=2))
+        return 0
+    if args.command == "queue":
+        return _show_queue(args)
+    cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    if not cmd:
+        parser.error(f"{args.command} needs a command after --")
+    if args.command == "guard":
+        return run_guarded(cmd, _config(args))
+    # imported here: a broken queue module must not take `stageload guard` down with it
+    from .queue import default_home, default_trace, run_queued
+
+    home = default_home()
+    trace = None if args.no_trace else (args.trace or default_trace(home, args.who))
+    return run_queued(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace)
