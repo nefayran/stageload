@@ -147,11 +147,18 @@ def fair_order(tickets: list[tuple[Path, dict[str, Any]]], last: dict[str, int])
     takes turns with the others instead of holding the lane until its batch is done
     (2026-10-07: seven LTX jobs of one session put every other session hours back)."""
     queues: dict[str, list[Path]] = {}
-    for path, data in tickets:
-        if data.get("state") == "running":
-            continue
-        queues.setdefault(data.get("owner") or owner_of(data.get("who", "")), []).append(path)
     clock = dict(last)
+    for path, data in tickets:
+        owner = data.get("owner") or owner_of(data.get("who", ""))
+        if data.get("state") == "running":
+            # the running job is its owner's last start, even before the history has it
+            try:
+                started = int(datetime.fromisoformat(data["started"]).timestamp() * 1e9)
+            except (KeyError, TypeError, ValueError):
+                started = time.time_ns()
+            clock[owner] = max(clock.get(owner, 0), started)
+            continue
+        queues.setdefault(owner, []).append(path)
     tick = max(clock.values(), default=0)
     order = []
     while queues:

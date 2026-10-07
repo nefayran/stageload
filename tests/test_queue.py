@@ -408,3 +408,18 @@ def test_turns_count_the_runs_already_in_the_history(tmp_path):
     last = _last_starts(lane)
     assert last["a"] > last["b"]
     assert "c" not in last
+
+
+def test_the_running_job_counts_as_its_owners_last_start(tmp_path):
+    # a job started by an older stageload is in neither the history nor owners.json yet
+    from stageload.queue import fair_order
+
+    tickets = [
+        (tmp_path / f"{1:020d}-1.json", {"who": "a-now", "state": "running",
+                                         "started": "2026-10-07T10:05:00+00:00"}),
+        (tmp_path / f"{2:020d}-2.json", {"who": "a-next", "state": "waiting"}),
+        (tmp_path / f"{3:020d}-3.json", {"who": "b-first", "state": "waiting"}),
+    ]
+    old = int(1791300000 * 1e9)  # 2026-10-06, long before
+    order = fair_order(tickets, {"a": old, "b": old + 10})
+    assert [p.name for p in order] == [f"{3:020d}-3.json", f"{2:020d}-2.json"]
