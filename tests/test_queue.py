@@ -293,3 +293,57 @@ def test_a_waiting_guard_does_not_count_as_busy_but_its_engine_does(tmp_path):
     assert code == 0
     busy = [line for line in logs if "busy:" in line]
     assert busy and all("--image key.png" in line for line in busy)
+
+
+def _command_line(pid):
+    return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                          text=True).stdout
+
+
+def test_a_waiting_run_does_not_show_its_command_to_other_guards(tmp_path):
+    # an older guard waiting for an engine matches whole command lines: a waiting run that showed
+    # the engine's command in its own would hold that guard, and the guard would hold the run
+    env = {**os.environ, "STAGELOAD_HOME": str(tmp_path)}
+    log = tmp_path / "log"
+    blocker = _start_run(tmp_path, log, "X", 2.0)
+    waiting = None
+    try:
+        _wait_for(_started(log, "X"))
+        cmd = [sys.executable, "-m", "stageload", "run", "--wait-free", "0", "--who", "late", "--",
+               sys.executable, "-c", "pass", "marker-engine-7319"]
+        waiting = subprocess.Popen(cmd, env=env, stderr=subprocess.DEVNULL)
+        _wait_for(lambda: len(list_queue(tmp_path)) == 2)
+        assert "marker-engine-7319" not in _command_line(waiting.pid)
+        assert [r["who"] for r in list_queue(tmp_path)] == ["X", "late"]
+        assert waiting.wait(timeout=20) == 0
+    finally:
+        blocker.kill()
+        if waiting is not None:
+            waiting.kill()
+
+
+def test_an_older_guard_is_not_held_by_a_run_waiting_in_the_queue(tmp_path):
+    env = {**os.environ, "STAGELOAD_HOME": str(tmp_path)}
+    log = tmp_path / "log"
+    blocker = _start_run(tmp_path, log, "X", 3.0)
+    late = None
+    try:
+        _wait_for(_started(log, "X"))
+        late = subprocess.Popen(
+            [sys.executable, "-m", "stageload", "run", "--wait-free", "0", "--who", "late", "--",
+             *_job(log, "late", 0.0), "marker-engine-4410"],
+            env=env, stderr=subprocess.DEVNULL)
+        _wait_for(lambda: len(list_queue(tmp_path)) == 2)
+        guard = subprocess.run(
+            [sys.executable, "-m", "stageload", "guard", "--wait-free", "0", "--quiet-for", "0s",
+             "--poll", "1s", "--start-timeout", "15s", "--busy", "marker-engine-441[0]", "--",
+             *_job(log, "older", 0.0)],
+            env=env, stderr=subprocess.DEVNULL, timeout=30)
+        assert guard.returncode == 0
+        assert late.wait(timeout=20) == 0
+    finally:
+        blocker.kill()
+        if late is not None:
+            late.kill()
+    starts = [who for kind, who, _ in _events(log) if kind == "start"]
+    assert starts == ["X", "older", "late"]

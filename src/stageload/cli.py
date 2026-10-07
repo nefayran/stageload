@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -173,8 +174,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "guard":
         return run_guarded(cmd, _config(args))
     # imported here: a broken queue module must not take `stageload guard` down with it
-    from .queue import default_home, default_trace, run_queued
+    from .queue import default_home, default_trace, run_queued, write_spec
 
     home = default_home()
     trace = None if args.no_trace else (args.trace or default_trace(home, args.who))
+    if argv is None:
+        # started from a real command line: hand over to a process whose own command line does
+        # not name the engine, or an older guard waiting for that engine takes the waiting run
+        # for the engine itself, and the two wait for each other (2026-10-07). exec keeps the pid.
+        spec = write_spec(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace)
+        os.execv(sys.executable, [sys.executable, "-m", "stageload.queue", str(spec)])
     return run_queued(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace)

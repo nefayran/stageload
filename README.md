@@ -206,6 +206,10 @@ stageload run --who sayu-ltx -- ltx-2-mlx --distilled ...
   memory.
 - The command inherits the lane's lock, so the lane stays taken while it runs even if the process
   that queued it is killed with SIGKILL.
+- A waiting run does not show the command in its own command line: `stageload run` writes it to
+  a file and hands over, with the same pid, to `python -m stageload.queue <file>`. A guard waiting
+  for the same engine would otherwise take the waiting run for the engine itself, and the two
+  would wait for each other.
 - Patterns in `~/.stageload/busy.txt`, one per line, are added to every run's `--busy`, so all
   sessions wait for the same engines started outside the queue.
 - Each run writes a memory trace (by default under `~/.stageload/traces`; `--trace PATH`,

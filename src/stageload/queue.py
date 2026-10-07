@@ -19,9 +19,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
@@ -48,7 +49,9 @@ DEFAULT_LANE = "ram"
 _TICKET = re.compile(r"^\d{20}-\d+\.json$")
 # a guard or run that has not started its command yet: its command line names the engine it
 # will start, but it is not running that engine
-_WRAPPER = re.compile(r"(?:-m\s+stageload|(?:^|[/\s])stageload)\s+(?:guard|run)\b")
+_WRAPPER = re.compile(
+    r"(?:-m\s+stageload|(?:^|[/\s])stageload)\s+(?:guard|run)\b|-m\s+stageload\.queue\b"
+)
 
 
 def default_home() -> Path:
@@ -323,3 +326,36 @@ def _run(
         + (f", trace {trace}" if trace is not None else "")
     )
     return code
+
+
+def write_spec(
+    cmd: Sequence[str],
+    config: GuardConfig,
+    *,
+    home: Path,
+    lane: str = DEFAULT_LANE,
+    who: str = "",
+    trace: Path | None = None,
+) -> Path:
+    """The run written to a file, for a process that reads it instead of its command line."""
+    jobs = home / "jobs"
+    jobs.mkdir(parents=True, exist_ok=True)
+    spec = jobs / f"{time.time_ns():020d}-{os.getpid()}.json"
+    data = {"cmd": list(cmd), "config": asdict(config), "home": str(home), "lane": lane,
+            "who": who, "trace": str(trace) if trace is not None else None}
+    _write_json(spec, data)
+    return spec
+
+
+def run_spec(path: Path) -> int:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    path.unlink(missing_ok=True)
+    fields = data["config"]
+    fields["busy"] = tuple(fields.get("busy", ()))
+    trace = Path(data["trace"]) if data.get("trace") else None
+    return run_queued(data["cmd"], GuardConfig(**fields), home=Path(data["home"]),
+                      lane=data["lane"], who=data["who"], trace=trace)
+
+
+if __name__ == "__main__":
+    sys.exit(run_spec(Path(sys.argv[1])))
