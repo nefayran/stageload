@@ -2,7 +2,7 @@
 
 Run multi-stage PyTorch pipelines on Apple Silicon with only the current stage's weights in memory.
 
-![Peak footprint per stage of Pixal3D on a 48 GB Mac, eager loading against staged loading](bench/results/2026-10-05/stages.png)
+![Peak footprint per stage of Pixal3D on a 48 GB Mac, eager loading against staged loading](https://raw.githubusercontent.com/nefayran/stageload/main/bench/results/2026-10-05/stages.png)
 
 ## Why
 
@@ -16,7 +16,7 @@ DINOv3 backbone four times, once per feature extractor.
 stageload loads a model the first time a stage asks for it and releases it in place when the
 pipeline moves to a stage that does not need it. Releasing moves the module's tensors to PyTorch's
 `meta` device, which frees their storage even while other code still holds a reference to the
-module. The design is in [docs/design/2026-10-04-stageload-design.md](docs/design/2026-10-04-stageload-design.md).
+module. The design is in [docs/design/2026-10-04-stageload-design.md](https://github.com/nefayran/stageload/blob/main/docs/design/2026-10-04-stageload-design.md).
 
 ## Any pipeline that runs its models in turn
 
@@ -27,7 +27,7 @@ to a method that already runs at that point, and the pipeline stays as it is. A 
 pipeline (a text encoder, a denoiser and an image decoder, one after another) has the same shape;
 Qwen-Image-2.1 through diffusers is the second pipeline measured
 ([results](#qwen-image-21-through-diffusers)). Pixal3D-mac is the first adapter;
-[`bench/qwen_image.py`](bench/qwen_image.py) wires a diffusers pipeline without changing its
+[`bench/qwen_image.py`](https://github.com/nefayran/stageload/blob/main/bench/qwen_image.py) wires a diffusers pipeline without changing its
 code, and [Use it in your own pipeline](#use-it-in-your-own-pipeline) shows the core on two models.
 
 ## Results
@@ -35,7 +35,7 @@ code, and [Use it in your own pipeline](#use-it-in-your-own-pipeline) shows the 
 ### Pixal3D
 
 Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two runs per mode
-([details and traces](bench/results/2026-10-05/README.md)):
+([details and traces](https://github.com/nefayran/stageload/blob/main/bench/results/2026-10-05/README.md)):
 
 | stage | eager, peak footprint | staged, peak footprint |
 |---|---|---|
@@ -64,23 +64,23 @@ Pixal3D `1024_cascade` on an Apple M5 Pro with 48 GB, one image, seed 7, two run
   by 1.24 to 1.86. That shows any change from staged loading is no larger than the port's own
   variation; it cannot show there is none.
 
-A staged run on a character image, rendered in Blender ([`bench/render_glb.py`](bench/render_glb.py)):
+A staged run on a character image, rendered in Blender ([`bench/render_glb.py`](https://github.com/nefayran/stageload/blob/main/bench/render_glb.py)):
 
-![The input image and the generated model](docs/images/input-output.png)
+![The input image and the generated model](https://raw.githubusercontent.com/nefayran/stageload/main/docs/images/input-output.png)
 
 The footprint over time, for an eager run stopped where the texture stage begins, the eager run
 the guard stopped, and a staged run:
 
-![Process footprint over time: eager loading against staged loading](bench/results/2026-10-05/memory.png)
+![Process footprint over time: eager loading against staged loading](https://raw.githubusercontent.com/nefayran/stageload/main/bench/results/2026-10-05/memory.png)
 
 ### Qwen-Image-2.1 through diffusers
 
 Text to image at 1024 x 1024, 20 steps, seed 7, on the same Mac
-([details and traces](bench/results/2026-10-06-qwen-image/README.md)). Eager is the usual
+([details and traces](https://github.com/nefayran/stageload/blob/main/bench/results/2026-10-06-qwen-image/README.md)). Eager is the usual
 `QwenImage21Pipeline.from_pretrained(...).to("mps")`. Staged keeps the VAE and loads the text
 encoder (16.3 GB) and the transformer (13.3 GB) one at a time; the pipeline's code is unchanged.
 
-![Peak footprint per stage of Qwen-Image-2.1 on a 48 GB Mac, eager loading against staged loading](bench/results/2026-10-06-qwen-image/stages.png)
+![Peak footprint per stage of Qwen-Image-2.1 on a 48 GB Mac, eager loading against staged loading](https://raw.githubusercontent.com/nefayran/stageload/main/bench/results/2026-10-06-qwen-image/stages.png)
 
 | stage | eager, peak footprint | staged, peak footprint |
 |---|---|---|
@@ -129,7 +129,7 @@ cd path/to/Pixal3D-mac
 ```
 
 `--load eager` runs the port's own loading for comparison. Flags, stages and the bench are in
-[docs/pixal3d.md](docs/pixal3d.md).
+[docs/pixal3d.md](https://github.com/nefayran/stageload/blob/main/docs/pixal3d.md).
 
 ## The guard
 
