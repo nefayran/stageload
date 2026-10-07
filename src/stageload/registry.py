@@ -5,15 +5,17 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from torch import nn
+# torch loads on first use, so `stageload run` and `stageload queue` start without it
+if TYPE_CHECKING:
+    from torch import nn
 
 from .events import Event, EventSink
 from .release import ReleasedModuleError, module_nbytes, release
 from .rng import preserved_rng
 
-Loader = Callable[[], nn.Module]
+Loader = Callable[[], "nn.Module"]
 _NO_DEFAULT = object()
 
 
@@ -25,7 +27,7 @@ class _Slot:
     loads: int = 0
 
 
-class StagedModels(MutableMapping[str, nn.Module]):
+class StagedModels(MutableMapping[str, "nn.Module"]):
     """Holds a pipeline's models; only the models the current stage needs stay in memory.
 
     ``models[name]`` loads a model the first time it is asked for. ``enter(stage)`` releases

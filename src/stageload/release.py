@@ -9,9 +9,12 @@ from __future__ import annotations
 import gc
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import torch
-from torch import nn
+# torch loads on first use, so `stageload run` and `stageload queue` start without it
+if TYPE_CHECKING:
+    import torch
+    from torch import nn
 
 _RELEASED = "_stageload_released"
 
@@ -59,6 +62,8 @@ def is_released(module: nn.Module) -> bool:
 
 
 def empty_device_cache() -> None:
+    import torch
+
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
     if torch.cuda.is_available():
@@ -86,6 +91,8 @@ def release(
     ``module`` raises :class:`ReleasedModuleError`. Its submodules are released too, but calling
     one of them directly fails with PyTorch's own error about tensors on the meta device.
     """
+    from torch import nn
+
     kept_storage = {
         _storage_key(tensor)
         for other in keep

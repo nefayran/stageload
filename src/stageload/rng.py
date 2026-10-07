@@ -12,8 +12,10 @@ import random
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
-import torch
+if TYPE_CHECKING:
+    import torch  # noqa: F401
 
 
 @contextmanager
@@ -24,6 +26,8 @@ def preserved_rng() -> Iterator[None]:
     Generators a library creates for itself, such as a ``torch.Generator`` or a
     ``numpy.random.Generator``, are not touched: nothing outside the library can see them.
     """
+    import torch
+
     cpu = torch.get_rng_state()
     mps = torch.mps.get_rng_state() if torch.backends.mps.is_available() else None
     # this initialises CUDA when nothing has yet; skipping it then would lose a seed queued by

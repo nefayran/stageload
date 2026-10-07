@@ -46,7 +46,7 @@ def _events(log):
     return out
 
 
-def _wait_for(predicate, timeout=10.0):
+def _wait_for(predicate, timeout=30.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -84,10 +84,10 @@ def test_two_runs_in_one_lane_never_overlap(tmp_path):
 
 def test_waiting_runs_start_in_the_order_they_joined(tmp_path):
     log = tmp_path / "log"
-    runs = [_start_run(tmp_path, log, "A", 1.0)]
+    runs = [_start_run(tmp_path, log, "A", 3.0)]
     _wait_for(_started(log, "A"))
     runs.append(_start_run(tmp_path, log, "B", 0.1))
-    time.sleep(0.4)
+    _wait_for(lambda: len(list_queue(tmp_path)) == 2)
     runs.append(_start_run(tmp_path, log, "C", 0.1))
     for run in runs:
         assert run.wait(timeout=30) == 0
@@ -109,7 +109,7 @@ def test_a_ticket_left_by_a_dead_process_does_not_block_the_queue(tmp_path):
 
 def test_lanes_do_not_wait_for_each_other(tmp_path):
     log = tmp_path / "log"
-    heavy = _start_run(tmp_path, log, "A", 1.5, lane="ram")
+    heavy = _start_run(tmp_path, log, "A", 5.0, lane="ram")
     _wait_for(_started(log, "A"))
     remote = _start_run(tmp_path, log, "B", 0.0, lane="codex")
     assert remote.wait(timeout=10) == 0
@@ -120,7 +120,7 @@ def test_lanes_do_not_wait_for_each_other(tmp_path):
 
 def test_the_queue_lists_the_running_job_and_the_waiting_ones(tmp_path):
     log = tmp_path / "log"
-    first = _start_run(tmp_path, log, "sayu-ltx", 1.5)
+    first = _start_run(tmp_path, log, "sayu-ltx", 5.0)
     _wait_for(_started(log, "sayu-ltx"))
     second = _start_run(tmp_path, log, "haraiya-rife", 0.0)
     _wait_for(lambda: len(list_queue(tmp_path)) == 2)
@@ -136,7 +136,7 @@ def test_the_queue_lists_the_running_job_and_the_waiting_ones(tmp_path):
 
 def test_a_waiting_run_that_is_terminated_never_starts_its_command(tmp_path):
     log = tmp_path / "log"
-    first = _start_run(tmp_path, log, "A", 2.0)
+    first = _start_run(tmp_path, log, "A", 5.0)
     _wait_for(_started(log, "A"))
     second = _start_run(tmp_path, log, "B", 0.0)
     _wait_for(lambda: len(list_queue(tmp_path)) == 2)
@@ -234,7 +234,7 @@ def test_runs_from_a_shell_script_are_queued_too(tmp_path):
 def test_the_lane_stays_taken_while_the_command_of_a_killed_run_still_runs(tmp_path):
     # SIGKILL cannot be caught: the queued command goes on running, so it holds the lane itself
     log = tmp_path / "log"
-    first = _start_run(tmp_path, log, "A", 1.5)
+    first = _start_run(tmp_path, log, "A", 3.0)
     _wait_for(_started(log, "A"))
     first.kill()
     first.wait(timeout=5)
@@ -260,11 +260,11 @@ def test_waiting_runs_do_not_hold_the_head_of_the_queue_as_busy(tmp_path):
         code = REAL_PS.format(cmd=cmd, home=str(tmp_path), lane="ram", who=who)
         return subprocess.Popen([sys.executable, "-c", code], stderr=subprocess.PIPE, text=True)
 
-    runs = [start("X", 1.0, engine=False)]
+    runs = [start("X", 3.0, engine=False)]
     try:
         _wait_for(_started(log, "X"))
         runs.append(start("A", 0.0, engine=True))
-        time.sleep(0.3)
+        _wait_for(lambda: len(list_queue(tmp_path)) == 2)
         runs.append(start("B", 0.0, engine=True))
         for run in runs:
             assert run.wait(timeout=20) == 0
@@ -305,7 +305,7 @@ def test_a_waiting_run_does_not_show_its_command_to_other_guards(tmp_path):
     # the engine's command in its own would hold that guard, and the guard would hold the run
     env = {**os.environ, "STAGELOAD_HOME": str(tmp_path)}
     log = tmp_path / "log"
-    blocker = _start_run(tmp_path, log, "X", 2.0)
+    blocker = _start_run(tmp_path, log, "X", 6.0)
     waiting = None
     try:
         _wait_for(_started(log, "X"))
@@ -325,7 +325,7 @@ def test_a_waiting_run_does_not_show_its_command_to_other_guards(tmp_path):
 def test_an_older_guard_is_not_held_by_a_run_waiting_in_the_queue(tmp_path):
     env = {**os.environ, "STAGELOAD_HOME": str(tmp_path)}
     log = tmp_path / "log"
-    blocker = _start_run(tmp_path, log, "X", 3.0)
+    blocker = _start_run(tmp_path, log, "X", 6.0)
     late = None
     try:
         _wait_for(_started(log, "X"))
@@ -358,3 +358,18 @@ def test_the_shared_busy_list_does_not_hold_a_lane_that_needs_no_memory(tmp_path
                       trace=None)
     assert code == 0
     assert not any("busy:" in line for line in logs)
+
+
+def test_the_queue_and_the_guard_start_without_torch():
+    # every waiting run is a process of its own: with torch loaded each one held about 110 MB and
+    # took seconds to start on a loaded machine
+    code = "import sys, stageload.cli, stageload.queue; print('torch' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip() == "False"
+
+
+def test_the_library_names_still_import_from_the_package():
+    code = ("from stageload import StagedModels, MemoryMeter, release, share, on_call; "
+            "print(StagedModels.__name__, MemoryMeter.__name__)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip() == "StagedModels MemoryMeter"
