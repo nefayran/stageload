@@ -243,3 +243,53 @@ def test_the_lane_stays_taken_while_the_command_of_a_killed_run_still_runs(tmp_p
     _wait_for(lambda: "end A" in log.read_text())
     times = {(kind, who): t for kind, who, t in _events(log)}
     assert times[("end", "A")] <= times[("start", "B")]
+
+
+REAL_PS = RUN.replace("processes=lambda: []", "processes=__import__('stageload.guard', "
+                      "fromlist=['list_processes']).list_processes")
+
+
+def test_waiting_runs_do_not_hold_the_head_of_the_queue_as_busy(tmp_path):
+    # every waiting run's own command line names the engine it will start; the head of the queue
+    # must not wait for the runs queued behind it, or the queue never moves
+    (tmp_path / "busy.txt").write_text("fake-engin[e]\n")
+    log = tmp_path / "log"
+
+    def start(who, seconds, engine):
+        cmd = _job(log, who, seconds) + (["fake-engine"] if engine else [])
+        code = REAL_PS.format(cmd=cmd, home=str(tmp_path), lane="ram", who=who)
+        return subprocess.Popen([sys.executable, "-c", code], stderr=subprocess.PIPE, text=True)
+
+    runs = [start("X", 1.0, engine=False)]
+    try:
+        _wait_for(_started(log, "X"))
+        runs.append(start("A", 0.0, engine=True))
+        time.sleep(0.3)
+        runs.append(start("B", 0.0, engine=True))
+        for run in runs:
+            assert run.wait(timeout=20) == 0
+    finally:
+        for run in runs:  # a stuck run left behind would hold the next tests as busy
+            run.kill()
+    starts = [who for kind, who, _ in _events(log) if kind == "start"]
+    assert starts == ["X", "A", "B"]
+
+
+def test_a_waiting_guard_does_not_count_as_busy_but_its_engine_does(tmp_path):
+    (tmp_path / "busy.txt").write_text("ltx-2-ml[x]\n")
+    guard = (9001, 1,
+             "/venv/bin/python -m stageload guard --busy x -- /p/.venv/bin/ltx-2-mlx --distilled")
+    engine = (9002, 9001, "/p/.venv/bin/ltx-2-mlx --distilled --image key.png 0 0.9")
+    snapshots = iter([[guard, engine], [guard]])
+    last = [[]]
+
+    def processes():
+        last[0] = next(snapshots, last[0])
+        return last[0]
+
+    io, logs = _quiet_io(processes=processes)
+    config = GuardConfig(poll=0.05, grace=1.0, start_timeout=5)
+    code = run_queued([sys.executable, "-c", "pass"], config, io=io, home=tmp_path, trace=None)
+    assert code == 0
+    busy = [line for line in logs if "busy:" in line]
+    assert busy and all("--image key.png" in line for line in busy)

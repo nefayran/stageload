@@ -46,6 +46,9 @@ from .meter import MemoryMeter, Readers, process_footprint
 
 DEFAULT_LANE = "ram"
 _TICKET = re.compile(r"^\d{20}-\d+\.json$")
+# a guard or run that has not started its command yet: its command line names the engine it
+# will start, but it is not running that engine
+_WRAPPER = re.compile(r"(?:-m\s+stageload|(?:^|[/\s])stageload)\s+(?:guard|run)\b")
 
 
 def default_home() -> Path:
@@ -129,6 +132,25 @@ def tree_footprint(root: int, processes: Callable[[], list[Process]] = list_proc
     return total
 
 
+def _without_wrappers(
+    processes: Callable[[], list[Process]], home: Path
+) -> Callable[[], list[Process]]:
+    """The process list without the runs and guards that are waiting: each one's command line
+    names the engine it will start, so the head of the queue would wait for the runs behind it
+    and none would ever start. What they started still counts."""
+
+    def listing() -> list[Process]:
+        root = home / "queue"
+        wrappers = set()
+        if root.exists():
+            for lane_dir in root.iterdir():
+                if lane_dir.is_dir():
+                    wrappers.update(int(d["pid"]) for _, d in _live_tickets(lane_dir))
+        return [p for p in processes() if p[0] not in wrappers and not _WRAPPER.search(p[2])]
+
+    return listing
+
+
 def list_queue(home: Path | None = None, lane: str | None = None) -> list[dict[str, Any]]:
     home = Path(home) if home is not None else default_home()
     root = home / "queue"
@@ -208,6 +230,7 @@ def run_queued(
     lane_dir = home / "queue" / lane
     lane_dir.mkdir(parents=True, exist_ok=True)
     config = replace(config, busy=tuple(config.busy) + load_busy(home))
+    io = replace(io, processes=_without_wrappers(io.processes, home))
     ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
     entry = {"pid": os.getpid(), "who": who, "lane": lane, "cmd": " ".join(cmd)[:300],
              "since": _utc(), "state": "waiting"}
