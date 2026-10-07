@@ -373,3 +373,23 @@ def test_the_library_names_still_import_from_the_package():
             "print(StagedModels.__name__, MemoryMeter.__name__)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert out.stdout.strip() == "StagedModels MemoryMeter"
+
+
+def test_an_agent_that_has_not_run_lately_goes_before_another_agents_batch(tmp_path):
+    # one session queued seven LTX jobs at once on 2026-10-07 and every other session waited hours
+    log = tmp_path / "log"
+    runs = [_start_run(tmp_path, log, "a-x", 3.0)]
+    try:
+        _wait_for(_started(log, "a-x"))
+        for count, who in enumerate(("a-2", "a-3"), start=2):
+            runs.append(_start_run(tmp_path, log, who, 0.0))
+            _wait_for(lambda count=count: len(list_queue(tmp_path)) == count)
+        runs.append(_start_run(tmp_path, log, "b-1", 0.0))
+        _wait_for(lambda: len(list_queue(tmp_path)) == 4)
+        for run in runs:
+            assert run.wait(timeout=60) == 0
+    finally:
+        for run in runs:
+            run.kill()
+    starts = [who for kind, who, _ in _events(log) if kind == "start"]
+    assert starts == ["a-x", "b-1", "a-2", "a-3"]

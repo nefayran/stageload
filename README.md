@@ -204,6 +204,10 @@ stageload run --who sayu-ltx -- ltx-2-mlx --distilled ...
   it holds the lane's lock; then the guard's memory checks run as usual. Lanes do not wait for
   each other, so jobs bound by a remote quota (`--lane codex`) stay apart from the ones that need
   memory.
+- Turns are fair between sessions: the owner who started least recently goes next, and each
+  owner's own commands keep the order they joined in. A session that queues a batch takes turns
+  with the others instead of holding the lane until the batch is done. The owner is `--owner`
+  (or `$STAGELOAD_OWNER`), else the part of `--who` before its first dash.
 - The command inherits the lane's lock, so the lane stays taken while it runs even if the process
   that queued it is killed with SIGKILL.
 - A waiting run does not show the command in its own command line: `stageload run` writes it to

@@ -96,6 +96,47 @@ def _live_tickets(lane_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
     return live
 
 
+def owner_of(who: str, owner: str | None = None) -> str:
+    """Whose turn a run takes: --owner, else the part of --who before the first dash."""
+    return owner or (who.split("-", 1)[0] if who else "") or "job"
+
+
+def _last_starts(lane_dir: Path) -> dict[str, int]:
+    try:
+        return json.loads((lane_dir / "owners.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _note_start(lane_dir: Path, owner: str) -> None:
+    starts = _last_starts(lane_dir)
+    starts[owner] = time.time_ns()
+    _write_json(lane_dir / "owners.json", starts)
+
+
+def fair_order(tickets: list[tuple[Path, dict[str, Any]]], last: dict[str, int]) -> list[Path]:
+    """The order the waiting entries will start in. The owner who started least recently goes next,
+    and each owner's own entries keep the order they joined in: one session that queues a batch
+    takes turns with the others instead of holding the lane until its batch is done
+    (2026-10-07: seven LTX jobs of one session put every other session hours back)."""
+    queues: dict[str, list[Path]] = {}
+    for path, data in tickets:
+        if data.get("state") == "running":
+            continue
+        queues.setdefault(data.get("owner") or owner_of(data.get("who", "")), []).append(path)
+    clock = dict(last)
+    tick = max(clock.values(), default=0)
+    order = []
+    while queues:
+        owner = min(queues, key=lambda o: (clock.get(o, 0), queues[o][0].name))
+        order.append(queues[owner].pop(0))
+        if not queues[owner]:
+            del queues[owner]
+        tick += 1
+        clock[owner] = tick
+    return order
+
+
 def load_busy(home: Path) -> tuple[str, ...]:
     """Patterns from ``busy.txt``, one per line: every run checks the same list, so a heavy
     engine added there holds the starts of all sessions at once."""
@@ -164,13 +205,18 @@ def list_queue(home: Path | None = None, lane: str | None = None) -> list[dict[s
     for lane_dir in lanes:
         if not lane_dir.exists():
             continue
-        for position, (_, data) in enumerate(_live_tickets(lane_dir)):
+        live = _live_tickets(lane_dir)
+        by_path = dict(live)
+        running = [(p, d) for p, d in live if d.get("state") == "running"]
+        ordered = running + [(p, by_path[p]) for p in fair_order(live, _last_starts(lane_dir))]
+        for position, (_, data) in enumerate(ordered):
             rows.append(
                 {
                     "lane": lane_dir.name,
                     "position": position,
                     "state": data.get("state", "waiting"),
                     "who": data.get("who", ""),
+                    "owner": data.get("owner") or owner_of(data.get("who", "")),
                     "pid": data.get("pid"),
                     "since": data.get("started") or data.get("since"),
                     "cmd": data.get("cmd", ""),
@@ -199,7 +245,11 @@ def _wait_turn(
     while True:
         if signals.count:
             return False
-        ahead = [data for path, data in _live_tickets(lane_dir) if path.name < ticket.name]
+        live = _live_tickets(lane_dir)
+        by_path = dict(live)
+        order = fair_order(live, _last_starts(lane_dir))
+        ahead = [by_path[p] for p in order[: order.index(ticket)]] if ticket in order else []
+        ahead = [d for p, d in live if d.get("state") == "running"] + ahead
         if not ahead:
             try:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -227,6 +277,7 @@ def run_queued(
     lane: str = DEFAULT_LANE,
     who: str = "",
     trace: Path | None = None,
+    owner: str | None = None,
 ) -> int:
     io = io or system_io()
     home = Path(home) if home is not None else default_home()
@@ -238,8 +289,8 @@ def run_queued(
         config = replace(config, busy=tuple(config.busy) + load_busy(home))
     io = replace(io, processes=_without_wrappers(io.processes, home))
     ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
-    entry = {"pid": os.getpid(), "who": who, "lane": lane, "cmd": " ".join(cmd)[:300],
-             "since": _utc(), "state": "waiting"}
+    entry = {"pid": os.getpid(), "who": who, "owner": owner_of(who, owner), "lane": lane,
+             "cmd": " ".join(cmd)[:300], "since": _utc(), "state": "waiting"}
     _write_json(ticket, entry)
     queued_at = io.clock()
     lock = (lane_dir / "run.lock").open("a")
@@ -256,6 +307,7 @@ def run_queued(
                 return EXIT_NO_ROOM
             entry.update(state="running", started=_utc())
             _write_json(ticket, entry)
+            _note_start(lane_dir, entry["owner"])
             waited = io.clock() - queued_at
             return _run(cmd, config, io, signals, lock, home, entry, trace, waited)
     finally:
@@ -339,13 +391,14 @@ def write_spec(
     lane: str = DEFAULT_LANE,
     who: str = "",
     trace: Path | None = None,
+    owner: str | None = None,
 ) -> Path:
     """The run written to a file, for a process that reads it instead of its command line."""
     jobs = home / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     spec = jobs / f"{time.time_ns():020d}-{os.getpid()}.json"
     data = {"cmd": list(cmd), "config": asdict(config), "home": str(home), "lane": lane,
-            "who": who, "trace": str(trace) if trace is not None else None}
+            "who": who, "owner": owner, "trace": str(trace) if trace is not None else None}
     _write_json(spec, data)
     return spec
 
@@ -357,7 +410,7 @@ def run_spec(path: Path) -> int:
     fields["busy"] = tuple(fields.get("busy", ()))
     trace = Path(data["trace"]) if data.get("trace") else None
     return run_queued(data["cmd"], GuardConfig(**fields), home=Path(data["home"]),
-                      lane=data["lane"], who=data["who"], trace=trace)
+                      lane=data["lane"], who=data["who"], trace=trace, owner=data.get("owner"))
 
 
 if __name__ == "__main__":

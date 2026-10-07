@@ -101,6 +101,10 @@ def _parser() -> argparse.ArgumentParser:
         help="who queued it, shown by `stageload queue` (default $STAGELOAD_WHO)",
     )
     run.add_argument(
+        "--owner", default=os.environ.get("STAGELOAD_OWNER"),
+        help="whose turn the run takes (default $STAGELOAD_OWNER, else --who up to its first dash)",
+    )
+    run.add_argument(
         "--lane", default="ram",
         help="commands of one lane run one at a time; lanes do not wait for each other "
         "(default ram)",
@@ -182,6 +186,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # started from a real command line: hand over to a process whose own command line does
         # not name the engine, or an older guard waiting for that engine takes the waiting run
         # for the engine itself, and the two wait for each other (2026-10-07). exec keeps the pid.
-        spec = write_spec(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace)
+        spec = write_spec(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace,
+                          owner=args.owner)
         os.execv(sys.executable, [sys.executable, "-m", "stageload.queue", str(spec)])
-    return run_queued(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace)
+    return run_queued(cmd, _config(args), home=home, lane=args.lane, who=args.who, trace=trace,
+                      owner=args.owner)
