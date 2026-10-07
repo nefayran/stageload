@@ -10,6 +10,15 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Rodion Kazennov" }]
+keywords = ["pytorch", "apple-silicon", "mps", "memory", "diffusers", "inference"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = ["torch>=2.1"]
 
 [project.optional-dependencies]
@@ -22,12 +31,17 @@ stageload-pixal3d = "stageload.pixal3d.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/nefayran/stageload"
+Issues = "https://github.com/nefayran/stageload/issues"
 
 [tool.hatch.version]
 path = "src/stageload/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stageload"]
+
+# the bench folder holds local run outputs next to the tracked results; the sdist takes only the package and its tests
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.ruff]
 line-length = 100
