@@ -232,7 +232,10 @@ def run_queued(
     home = Path(home) if home is not None else default_home()
     lane_dir = home / "queue" / lane
     lane_dir.mkdir(parents=True, exist_ok=True)
-    config = replace(config, busy=tuple(config.busy) + load_busy(home))
+    if lane == DEFAULT_LANE:
+        # the shared list names the engines that fill the memory; a lane such as codex waits on a
+        # remote quota instead, and holding it behind those engines only wastes its turn
+        config = replace(config, busy=tuple(config.busy) + load_busy(home))
     io = replace(io, processes=_without_wrappers(io.processes, home))
     ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
     entry = {"pid": os.getpid(), "who": who, "lane": lane, "cmd": " ".join(cmd)[:300],

@@ -210,8 +210,9 @@ stageload run --who sayu-ltx -- ltx-2-mlx --distilled ...
   a file and hands over, with the same pid, to `python -m stageload.queue <file>`. A guard waiting
   for the same engine would otherwise take the waiting run for the engine itself, and the two
   would wait for each other.
-- Patterns in `~/.stageload/busy.txt`, one per line, are added to every run's `--busy`, so all
-  sessions wait for the same engines started outside the queue.
+- Patterns in `~/.stageload/busy.txt`, one per line, are added to the `--busy` of every run in the
+  `ram` lane, so all sessions wait for the same engines started outside the queue. Other lanes
+  skip the list; a lane that needs no memory should also pass `--wait-free 0`.
 - Each run writes a memory trace (by default under `~/.stageload/traces`; `--trace PATH`,
   `--no-trace`) with the footprint of the command and of every process under it, and appends one
   line to `~/.stageload/history.jsonl`: who, exit code, seconds waited and run, peak footprint and

@@ -347,3 +347,14 @@ def test_an_older_guard_is_not_held_by_a_run_waiting_in_the_queue(tmp_path):
             late.kill()
     starts = [who for kind, who, _ in _events(log) if kind == "start"]
     assert starts == ["X", "older", "late"]
+
+
+def test_the_shared_busy_list_does_not_hold_a_lane_that_needs_no_memory(tmp_path):
+    # a lane like codex waits on a remote quota, not on the engines that fill the memory
+    (tmp_path / "busy.txt").write_text("fake-heavy-engine\n")
+    io, logs = _quiet_io(processes=lambda: [(4242, 1, "python fake-heavy-engine --render")])
+    config = GuardConfig(poll=0.05, grace=1.0, start_timeout=5)
+    code = run_queued([sys.executable, "-c", "pass"], config, io=io, home=tmp_path, lane="codex",
+                      trace=None)
+    assert code == 0
+    assert not any("busy:" in line for line in logs)
