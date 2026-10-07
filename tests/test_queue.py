@@ -393,3 +393,18 @@ def test_an_agent_that_has_not_run_lately_goes_before_another_agents_batch(tmp_p
             run.kill()
     starts = [who for kind, who, _ in _events(log) if kind == "start"]
     assert starts == ["a-x", "b-1", "a-2", "a-3"]
+
+
+def test_turns_count_the_runs_already_in_the_history(tmp_path):
+    # runs queued before owners.json existed still count: the history says who ran last
+    from stageload.queue import _last_starts
+
+    lane = tmp_path / "queue" / "ram"
+    lane.mkdir(parents=True)
+    (tmp_path / "history.jsonl").write_text(
+        '{"end": "2026-10-07T09:00:00+00:00", "lane": "ram", "who": "b-old", "run_s": 60}\n'
+        '{"end": "2026-10-07T10:00:00+00:00", "lane": "ram", "who": "a-new", "run_s": 60}\n'
+        '{"end": "2026-10-07T11:00:00+00:00", "lane": "codex", "who": "c-lane", "run_s": 60}\n')
+    last = _last_starts(lane)
+    assert last["a"] > last["b"]
+    assert "c" not in last

@@ -101,11 +101,38 @@ def owner_of(who: str, owner: str | None = None) -> str:
     return owner or (who.split("-", 1)[0] if who else "") or "job"
 
 
-def _last_starts(lane_dir: Path) -> dict[str, int]:
+def _history_starts(lane_dir: Path, limit: int = 2000) -> dict[str, int]:
+    """When each owner last started in this lane, by the finished runs in history.jsonl: runs
+    queued by an older stageload, or before owners.json existed, still count."""
+    path = lane_dir.parent.parent / "history.jsonl"
+    starts: dict[str, int] = {}
     try:
-        return json.loads((lane_dir / "owners.json").read_text(encoding="utf-8"))
+        lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+    except OSError:
+        return starts
+    for line in lines:
+        try:
+            record = json.loads(line)
+            if record.get("lane") != lane_dir.name:
+                continue
+            end = datetime.fromisoformat(record["end"]).timestamp()
+            start = int((end - float(record.get("run_s") or 0)) * 1e9)
+        except (ValueError, KeyError, TypeError):
+            continue
+        owner = owner_of(record.get("who", ""))
+        starts[owner] = max(starts.get(owner, 0), start)
+    return starts
+
+
+def _last_starts(lane_dir: Path) -> dict[str, int]:
+    starts = _history_starts(lane_dir)
+    try:
+        noted = json.loads((lane_dir / "owners.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        noted = {}
+    for owner, start in noted.items():
+        starts[owner] = max(starts.get(owner, 0), int(start))
+    return starts
 
 
 def _note_start(lane_dir: Path, owner: str) -> None:
