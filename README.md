@@ -92,6 +92,12 @@ encoder (16.3 GB) and the transformer (13.3 GB) one at a time; the pipeline's co
 - Eager ran all 20 steps. The VAE decode then took its footprint from 32.5 to 43.6 GB and swap
   grew by 8 GB, so the guard stopped it before it wrote an image. Staged released the transformer
   before the decode, and its swap did not grow in either of its two runs.
+- Model CPU offload did not finish either. The same run with
+  `pipe.enable_model_cpu_offload(device="mps")` (one run, 2026-10-08,
+  [trace](https://github.com/nefayran/stageload/blob/main/bench/results/2026-10-08-qwen-image-offload/README.md))
+  kept the process footprint at 18.5 GB, but swap grew by 9.6 GB and the guard stopped it during
+  the VAE decode, where it stopped eager. Footprint does not count pages already in swap, so a
+  footprint-only comparison would make offload look like staged.
 - A step costs the same: the second staged run's denoising took 79 s, eager's 77 s. Staged spent
   13 s loading the two models.
 - The two staged runs produced the same image, bit for bit. Eager produced none, so these runs do
