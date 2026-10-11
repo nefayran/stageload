@@ -114,8 +114,10 @@ encoder (16.3 GB) and the transformer (13.3 GB) one at a time; the pipeline's co
   kept the process footprint at 18.5 GB, but swap grew by 9.6 GB and the guard stopped it during
   the VAE decode, where it stopped eager. Footprint does not count pages already in swap, so a
   footprint-only comparison would make offload look like staged.
-- A step costs the same: the second staged run's denoising took 79 s, eager's 77 s. Staged spent
-  13 s loading the two models.
+- Counted from the moment the transformer was in memory to the start of the decode, the 20 steps
+  took 70 s and 99 s in the two staged runs and 77.5 s for eager; the traces do not show why the
+  staged runs differ. Staged also spent about 13 s per run loading the two models and 4 to 5 s
+  releasing the transformer.
 - The two staged runs produced the same image, bit for bit. Eager produced none, so these runs do
   not show that both modes give the same image.
 

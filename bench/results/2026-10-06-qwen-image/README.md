@@ -55,9 +55,12 @@ loading: swap grew from 8.6 to 18.5 GB in 18 s, and the guard stopped it at a fo
 | decode | 10.1 (stopped) | 2.2 | 1.9 |
 
 Staged loads the text encoder in its encode stage and the transformer in its denoise stage; the
-two loads took 12.6 s in the first run and 13.0 s in the second. The second run's denoising took
-79 s against eager's 77.5 s, so a step costs the same. The first run's denoising took 109 s, and
-its trace does not show why.
+two loads took 12.6 s in the first run and 13.0 s in the second. A stage's time here runs from the
+end of the releases that entering it set off, so staged's denoise column also holds the transformer's
+load (5.25 s and 5.35 s) and its release when the decode begins (4.9 s and 3.8 s). Counted from the
+moment the transformer was in memory to the start of the decode, the 20 steps took 99.0 s in the
+first run, 69.8 s in the second and 77.5 s for eager. The traces do not show why the two staged
+runs differ.
 
 ## Output
 
