@@ -2,6 +2,22 @@
 
 Run multi-stage PyTorch pipelines on Apple Silicon with only the current stage's weights in memory.
 
+```sh
+pip install stageload
+```
+
+Measured on a 48 GB M5 Pro ([Results](#results) has the tables and traces):
+
+- Pixal3D image-to-3D (`1024_cascade`): with eager loading the guard stopped the run in the texture
+  stage at 44 GB. Staged loading finished both runs in about ten minutes and peaked at 30 GB while
+  models were loaded; the port's mesh export, after every weight is released, goes higher.
+- Qwen-Image-2.1 through diffusers, 1024 x 1024: the guard stopped eager loading and
+  `enable_model_cpu_offload` in the VAE decode as swap grew. Staged loading peaked at 19 GB, and
+  swap did not grow in either of its two runs.
+
+Your own pipeline needs a loader per model and a list of models per stage ([example](#use-it-in-your-own-pipeline)),
+and `on_call` attaches stages to code you do not own.
+
 ![Peak footprint per stage of Pixal3D on a 48 GB Mac, eager loading against staged loading](https://raw.githubusercontent.com/nefayran/stageload/main/bench/results/2026-10-05/stages.png)
 
 ## Why
