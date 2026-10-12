@@ -7,7 +7,7 @@ from .registry import StagedModels
 from .release import ReleasedModuleError, ReleaseStats, release
 from .share import share
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Event",
