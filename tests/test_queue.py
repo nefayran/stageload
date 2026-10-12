@@ -5,11 +5,14 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from stageload.cli import main
 from stageload.guard import GuardConfig, GuardIO
 from stageload.queue import list_queue, run_queued
 
 MB = 2**20
+macos = pytest.mark.skipif(sys.platform != "darwin", reason="the meter reads macOS counters")
 
 RUN = """
 import sys
@@ -147,6 +150,7 @@ def test_a_waiting_run_that_is_terminated_never_starts_its_command(tmp_path):
     assert "start B" not in log.read_text()
 
 
+@macos
 def test_the_trace_counts_memory_of_the_command_children_too(tmp_path):
     holder = "import time; b = b'x' * (300 * 2**20); time.sleep(2.0)"
     parent = f"import subprocess, sys; subprocess.run([sys.executable, '-c', {holder!r}])"
@@ -160,6 +164,7 @@ def test_the_trace_counts_memory_of_the_command_children_too(tmp_path):
     assert peak > 250 * MB
 
 
+@macos
 def test_every_finished_run_is_written_to_the_history(tmp_path):
     io, _ = _quiet_io()
     # long enough for the meter to sample it: a command gone before the first sample has no peak
@@ -196,6 +201,7 @@ def test_the_memory_check_still_runs_inside_the_queue(tmp_path):
     assert any("memory available 20% < 40%" in line for line in logs)
 
 
+@macos
 def test_cli_run_passes_the_exit_code_through(tmp_path, monkeypatch):
     monkeypatch.setenv("STAGELOAD_HOME", str(tmp_path))
     cmd = [sys.executable, "-c", "import sys; sys.exit(7)"]
@@ -221,6 +227,7 @@ def test_cli_run_needs_a_command(tmp_path, monkeypatch, capsys):
     assert "needs a command" in capsys.readouterr().err
 
 
+@macos
 def test_runs_from_a_shell_script_are_queued_too(tmp_path):
     # agents start jobs from shell scripts; the env var is all they need to share one home
     log = tmp_path / "log"
@@ -300,6 +307,7 @@ def _command_line(pid):
                           text=True).stdout
 
 
+@macos
 def test_a_waiting_run_does_not_show_its_command_to_other_guards(tmp_path):
     # an older guard waiting for an engine matches whole command lines: a waiting run that showed
     # the engine's command in its own would hold that guard, and the guard would hold the run
@@ -322,6 +330,7 @@ def test_a_waiting_run_does_not_show_its_command_to_other_guards(tmp_path):
             waiting.kill()
 
 
+@macos
 def test_an_older_guard_is_not_held_by_a_run_waiting_in_the_queue(tmp_path):
     env = {**os.environ, "STAGELOAD_HOME": str(tmp_path)}
     log = tmp_path / "log"
