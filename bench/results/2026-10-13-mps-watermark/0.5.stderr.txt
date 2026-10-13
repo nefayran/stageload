@@ -1,0 +1,12 @@
+13:31:47Z queue: waiting in ram (3 ahead: projects-37-sh37-c4, claude-mps-watermark-default, projects-37-sh37-c5)
+13:36:02Z queue: waiting in ram (4 ahead: projects-37-sh37-c4, ep002-tts-c144, claude-mps-watermark-default)
+13:39:40Z queue: waiting in ram (3 ahead: ep002-tts-c144, claude-mps-watermark-default, projects-37-sh37-c5)
+13:41:29Z queue: waiting in ram (3 ahead: turbo4-sh36-c6, claude-mps-watermark-default, projects-37-sh37-c5)
+13:42:36Z queue: waiting in ram (4 ahead: turbo4-sh36-c6, claude-mps-watermark-default, projects-37-sh37-c5)
+13:52:37Z queue: waiting in ram (3 ahead: claude-mps-watermark-default, projects-37-sh37-c5, ep002-tts-retake)
+13:53:49Z queue: waiting in ram (2 ahead: projects-37-sh37-c5, ep002-tts-retake)
+14:03:57Z queue: waiting in ram (1 ahead: ep002-tts-retake)
+14:05:14Z guard: waiting (quiet for 0 s of 20 s)
+14:05:34Z queue: start in ram after 2027 s, swap 3.4 GB, stop above 5.4 GB or under 10% available twice
+14:05:58Z guard: exit 0
+14:05:59Z queue: exit 0 after 24 s, peak 18.7 GB, trace ~/Projects/stageload/bench/results/2026-10-13-mps-watermark/0.5.trace.jsonl

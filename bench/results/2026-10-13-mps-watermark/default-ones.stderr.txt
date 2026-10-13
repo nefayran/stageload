@@ -1,0 +1,8 @@
+13:26:03Z queue: waiting in ram (1 ahead: projects-37-sh37-c4)
+13:36:00Z queue: waiting in ram (2 ahead: projects-37-sh37-c4, ep002-tts-c144)
+13:39:44Z queue: waiting in ram (1 ahead: ep002-tts-c144)
+13:41:33Z queue: waiting in ram (1 ahead: turbo4-sh36-c6)
+13:52:36Z guard: waiting (quiet for 0 s of 20 s)
+13:52:56Z queue: start in ram after 1613 s, swap 4.2 GB, stop above 6.2 GB or under 10% available twice
+13:53:48Z guard: exit 0
+13:53:48Z queue: exit 0 after 51 s, peak 46.2 GB, trace ~/Projects/stageload/bench/results/2026-10-13-mps-watermark/default.trace.jsonl

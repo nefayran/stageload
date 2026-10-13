@@ -1,0 +1,8 @@
+13:53:48Z queue: waiting in ram (4 ahead: projects-37-sh37-c5, ep002-tts-retake, claude-mps-watermark-0.5-both)
+14:03:56Z queue: waiting in ram (3 ahead: ep002-tts-retake, claude-mps-watermark-0.5-both, projects-37-sh35-c9)
+14:05:13Z queue: waiting in ram (2 ahead: claude-mps-watermark-0.5-both, projects-37-sh35-c9)
+14:05:59Z queue: waiting in ram (1 ahead: projects-37-sh35-c9)
+14:19:31Z guard: waiting (quiet for 0 s of 20 s)
+14:19:52Z queue: start in ram after 1564 s, swap 4.7 GB, stop above 6.7 GB or under 10% available twice
+14:20:37Z guard: killing pid 63786 and its group (swap 9.2 GB > 6.7 GB)
+14:20:37Z queue: exit 3 after 45 s, peak 36.2 GB, trace ~/Projects/stageload/bench/results/2026-10-13-mps-watermark/0.0.trace.jsonl

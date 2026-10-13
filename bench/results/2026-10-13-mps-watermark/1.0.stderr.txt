@@ -1,0 +1,9 @@
+14:05:59Z queue: waiting in ram (5 ahead: projects-37-sh35-c9, claude-mps-watermark-0.0, projects-37-sh35-c10)
+14:19:32Z queue: waiting in ram (4 ahead: claude-mps-watermark-0.0, projects-37-sh35-c10, claude-mps-watermark-default-rand)
+14:20:38Z queue: waiting in ram (3 ahead: projects-37-sh35-c10, claude-mps-watermark-default-rand, projects-37-sh36-c3)
+14:30:44Z queue: waiting in ram (2 ahead: claude-mps-watermark-default-rand, projects-37-sh36-c3)
+14:31:51Z queue: waiting in ram (1 ahead: projects-37-sh36-c3)
+14:44:13Z guard: waiting (quiet for 0 s of 20 s)
+14:44:33Z queue: start in ram after 2315 s, swap 4.3 GB, stop above 6.3 GB or under 10% available twice
+14:45:14Z guard: killing pid 72900 and its group (swap 8.1 GB > 6.3 GB)
+14:45:14Z queue: exit 3 after 40 s, peak 34.7 GB, trace ~/Projects/stageload/bench/results/2026-10-13-mps-watermark/1.0.trace.jsonl

@@ -1,0 +1,10 @@
+0.5 exit 1
+1.0 exit 1
+default exit 0
+0.5 (high and low) exit 0
+0.0 exit 3
+done
+default (random) exit 3
+1.0 (high and low) exit 3
+done2
+0.8 (high and low) exit 0

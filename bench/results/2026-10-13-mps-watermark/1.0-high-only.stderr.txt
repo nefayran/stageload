@@ -1,0 +1,13 @@
+13:13:10Z queue: waiting in ram (1 ahead: projects-37-sh37-c3)
+13:25:38Z guard: waiting (quiet for 0 s of 20 s)
+13:25:58Z queue: start in ram after 768 s, swap 3.8 GB, stop above 5.8 GB or under 10% available twice
+Traceback (most recent call last):
+  File "~/Projects/stageload/bench/mps-watermark/fill.py", line 18, in <module>
+    rec = torch.mps.recommended_max_memory()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "~/local-llm/qwenimage-venv/lib/python3.12/site-packages/torch/mps/__init__.py", line 137, in recommended_max_memory
+    return torch._C._mps_recommendedMaxMemory()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: invalid low watermark ratio 1.4
+13:26:02Z guard: exit 1
+13:26:02Z queue: exit 1 after 4 s, peak 0.1 GB, trace ~/Projects/stageload/bench/results/2026-10-13-mps-watermark/1.0.trace.jsonl

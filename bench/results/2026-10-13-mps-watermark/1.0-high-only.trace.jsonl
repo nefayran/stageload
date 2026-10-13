@@ -1,0 +1,11 @@
+{"type":"start","utc":"2026-10-13T13:25:58+00:00","interval":0.5,"who":"claude-mps-watermark-1.0","lane":"ram","cmd":"nice -n 15 env PYTORCH_MPS_HIGH_WATERMARK_RATIO=1.0 ~/local-llm/qwenimage-venv/bin/python ~/Projects/stageload/bench/mps-watermark/fill.py"}
+{"type":"sample","t":0.0,"footprint":6406576,"swap_used":4080009216,"level":83}
+{"type":"sample","t":0.541,"footprint":72712840,"swap_used":4080009216,"level":83}
+{"type":"sample","t":1.072,"footprint":87245448,"swap_used":4080009216,"level":83}
+{"type":"sample","t":1.607,"footprint":99713696,"swap_used":4080009216,"level":83}
+{"type":"sample","t":2.142,"footprint":109429408,"swap_used":4080009216,"level":83}
+{"type":"sample","t":2.677,"footprint":119472824,"swap_used":4080009216,"level":83}
+{"type":"sample","t":3.213,"footprint":126862008,"swap_used":4080009216,"level":83}
+{"type":"sample","t":3.745,"footprint":152666808,"swap_used":4080009216,"level":83}
+{"type":"sample","t":4.241,"footprint":0,"swap_used":4080009216,"level":84}
+{"type":"end"}
