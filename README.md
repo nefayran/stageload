@@ -10,18 +10,18 @@ only when enough memory is free and stops it if swap grows past a set budget, an
 queues heavy commands so they run one at a time.
 
 Measured on a 48 GB M5 Pro, staged loading (stageload) against each pipeline's own eager loading.
-Every run went through stageload's memory guard (`stageload guard`), set to stop a command once
-swap had grown 8 GB past its level at the start ([Results](#results) has the tables and traces):
+Each run went through `stageload guard`, stageload's memory guard, which would stop it once swap
+had grown by 8 GB after it started ([Results](#results) has the tables and traces):
 
 - Pixal3D-mac, the Apple Silicon port of the Pixal3D image-to-3D model (`1024_cascade` pipeline):
   eager loading (the port's default, every model built at the start) reached 44 GB in the texture
-  stage; swap grew by 12 GB and the guard stopped the run. With staged loading both runs finished
-  in about ten minutes and peaked at 30 GB while models were loaded; the port's mesh export, after
-  every weight is freed, goes higher.
+  stage and added 12 GB of swap, so the run was stopped there. With staged loading both runs
+  finished in about ten minutes and peaked at 30 GB while models were loaded; the port's mesh
+  export, after every weight is freed, goes higher.
 - Qwen-Image-2.1 through diffusers, 1024 x 1024: eager loading (the whole pipeline moved to the
-  GPU) and diffusers' `enable_model_cpu_offload` had added 8 and 9.6 GB of swap when the guard
-  stopped them in the VAE decode, before either wrote an image. Staged loading peaked at 19 GB,
-  and swap did not grow in either of its two runs.
+  GPU) and diffusers' `enable_model_cpu_offload` added 8 and 9.6 GB of swap and were stopped in
+  the VAE decode, before either wrote an image. Staged loading peaked at 19 GB, and swap did not
+  grow in either of its two runs.
 
 ## Quick start
 
@@ -124,10 +124,10 @@ stageload ships one ready-made adapter, for Pixal3D-mac ([below](#pixal3d-mac)).
 
 Every run below was its own process under `stageload guard --wait-free 40 --swap-budget 8G`
 ([the memory guard](#the-memory-guard-stageload-guard)): it started once at least 40 % of memory
-was available, and the guard would stop it if swap grew more than 8 GB over its level at the
-start or if available memory stayed under 10 %. "Stopped by the guard" in the tables and charts
-means that happened. Peak footprint is the process's memory as Activity Monitor shows it,
-including memory that macOS has compressed.
+was available, and it would be stopped once swap had grown by 8 GB over its level at the start, or
+if available memory stayed under 10 %. "Stopped" in the tables below, and "stopped by the guard"
+in the charts, mean that happened. Peak footprint is the process's memory as Activity Monitor
+shows it, including memory that macOS has compressed.
 
 ### Pixal3D
 
@@ -142,13 +142,13 @@ Eager is the port's own loading; staged is `stageload-pixal3d`.
 | structure | 22.2 GB | 10.9 GB |
 | shape_512 | 26.6 GB | 11.4 to 11.5 GB |
 | shape_1024 | 30.5 GB | 13.1 GB |
-| texture | 44.2 GB, then stopped by the guard (a separate run on 2026-10-04) | 30.1 GB |
+| texture | stopped at 44.2 GB (a separate run on 2026-10-04) | 30.1 GB |
 | decode | – | 17.9 to 18.4 GB |
 | export | – | 69.6 to 70.2 GB |
 
 - Eager loading did not get through the texture stage on this machine. Within 10 s of entering
   it the footprint rose from 27 to 44 GB, available memory fell to 6 % and swap reached 27 GB,
-  12 GB more than when the run started, so the guard stopped it. The other eager numbers come
+  12 GB more than when the run started, so the run was stopped. The other eager numbers come
   from two runs set to stop where the texture stage begins (`--stop-at texture`). Both staged runs
   finished, in about ten minutes each, of which 24 s went to loading models.
 - Most of the texture stage's 30 GB is working memory: the texture model itself is 2.6 GB. When
@@ -167,7 +167,7 @@ A staged run on a character image, rendered in Blender ([`bench/render_glb.py`](
 ![The input image and the generated model](https://raw.githubusercontent.com/nefayran/stageload/main/docs/images/input-output.png)
 
 The footprint over time, for an eager run set to stop where the texture stage begins, the eager
-run the guard stopped, and a staged run:
+run stopped in the texture stage, and a staged run:
 
 ![Process footprint over time: eager loading against staged loading](https://raw.githubusercontent.com/nefayran/stageload/main/bench/results/2026-10-05/memory.png)
 
@@ -185,15 +185,15 @@ encoder (16.3 GB) and the transformer (13.3 GB) one at a time; the pipeline's co
 | load | 31.4 GB | 2.1 GB |
 | encode | 31.4 GB | 19.0 GB |
 | denoise | 32.5 GB | 16.2 to 18.6 GB |
-| decode | 43.6 GB, then stopped by the guard | 14.4 GB |
+| decode | stopped at 43.6 GB | 14.4 GB |
 
 - Eager ran all 20 steps. The VAE decode then took its footprint from 32.5 to 43.6 GB and swap
-  grew by 8 GB, so the guard stopped it before it wrote an image. Staged released the transformer
+  grew by 8 GB, so the run was stopped before it wrote an image. Staged released the transformer
   before the decode, and its swap did not grow in either of its two runs.
 - Model CPU offload did not finish either. The same run with
   `pipe.enable_model_cpu_offload(device="mps")` (one run, 2026-10-08,
   [trace](https://github.com/nefayran/stageload/blob/main/bench/results/2026-10-08-qwen-image-offload/README.md))
-  kept the process footprint at 18.5 GB, but swap grew by 9.6 GB and the guard stopped it during
+  kept the process footprint at 18.5 GB, but swap grew by 9.6 GB and the run was stopped during
   the VAE decode, at the same point as eager. Footprint does not count pages already in swap, so
   a footprint-only comparison would make offload look like staged.
 - Counted from the moment the transformer was in memory to the start of the decode, the 20 steps
@@ -231,7 +231,7 @@ It waits until macOS reports at least `--wait-free` percent of memory available
 (`kern.memorystatus_level`) and no process has matched a `--busy` pattern for `--quiet-for`, then
 runs the command; the pattern above makes it wait while a llama.cpp server is running.
 `--quiet-for` is a minute by default, so the short gap between two jobs of a script that runs
-them one after another does not count as quiet. The guard stops the command if swap grows more
+them one after another does not count as quiet. It stops the command if swap grows more
 than `--swap-budget` over what was used at the start, or if available memory stays under
 `--kill-free` (10 %) for two checks in a row. Stopping means SIGTERM to the command's process
 group and, five seconds later, SIGKILL to whatever of the group is left.
