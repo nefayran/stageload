@@ -194,11 +194,12 @@ def test_the_shared_busy_list_holds_the_start(tmp_path):
 
 
 def test_the_memory_check_still_runs_inside_the_queue(tmp_path):
-    io, logs = _quiet_io(levels=(20, 25, 90))
+    # the memory wait reads the level a few times a poll (gate, room checks, stale swap)
+    io, logs = _quiet_io(levels=(20,) * 6 + (90,))
     code = run_queued([sys.executable, "-c", "pass"], GuardConfig(poll=0.05, grace=1.0), io=io,
                       home=tmp_path, trace=None)
     assert code == 0
-    assert any("memory available 20% < 40%" in line for line in logs)
+    assert any("memory available 20% < 35%" in line for line in logs)  # --wait-free default 35
 
 
 @macos
@@ -432,3 +433,20 @@ def test_the_running_job_counts_as_its_owners_last_start(tmp_path):
     old = int(1791300000 * 1e9)  # 2026-10-06, long before
     order = fair_order(tickets, {"a": old, "b": old + 10})
     assert [p.name for p in order] == [f"{3:020d}-3.json", f"{2:020d}-2.json"]
+
+
+def test_an_earlier_deadline_starts_first_and_turns_stay_fair_within_it(tmp_path):
+    # 2026-10-18: a release due tomorrow waited behind a week of later work; the deadline goes first
+    from stageload.queue import fair_order
+
+    tickets = [
+        (tmp_path / f"{1:020d}-1.json", {"who": "sh-c1", "state": "waiting"}),
+        (tmp_path / f"{2:020d}-2.json", {"who": "w02-c1", "state": "waiting", "deadline": "2026-10-19T11:00Z"}),
+        (tmp_path / f"{3:020d}-3.json", {"who": "w03-c1", "state": "waiting", "deadline": "2026-10-20T11:00Z"}),
+        (tmp_path / f"{4:020d}-4.json", {"who": "w02-c2", "state": "waiting", "deadline": "2026-10-19T11:00Z"}),
+        (tmp_path / f"{5:020d}-5.json", {"who": "x-c1", "state": "waiting", "deadline": "2026-10-19T11:00Z"}),
+    ]
+    order = [p.name for p in fair_order(tickets, {})]
+    # the three due on the 19th first (w02 and x take turns), then the one due on the 20th, then the one with none
+    assert order[:3] == [f"{2:020d}-2.json", f"{5:020d}-5.json", f"{4:020d}-4.json"]
+    assert order[3:] == [f"{3:020d}-3.json", f"{1:020d}-1.json"]

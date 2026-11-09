@@ -108,16 +108,96 @@ def memorystatus_level() -> int:
     return int(level.value)
 
 
+class _VmStatistics64(ctypes.Structure):
+    """``struct vm_statistics64`` of <mach/vm_statistics.h>, what ``vm_stat`` prints."""
+
+    _fields_ = [
+        ("free_count", ctypes.c_uint32),
+        ("active_count", ctypes.c_uint32),
+        ("inactive_count", ctypes.c_uint32),
+        ("wire_count", ctypes.c_uint32),
+        ("zero_fill_count", ctypes.c_uint64),
+        ("reactivations", ctypes.c_uint64),
+        ("pageins", ctypes.c_uint64),
+        ("pageouts", ctypes.c_uint64),
+        ("faults", ctypes.c_uint64),
+        ("cow_faults", ctypes.c_uint64),
+        ("lookups", ctypes.c_uint64),
+        ("hits", ctypes.c_uint64),
+        ("purges", ctypes.c_uint64),
+        ("purgeable_count", ctypes.c_uint32),
+        ("speculative_count", ctypes.c_uint32),
+        ("decompressions", ctypes.c_uint64),
+        ("compressions", ctypes.c_uint64),
+        ("swapins", ctypes.c_uint64),
+        ("swapouts", ctypes.c_uint64),
+        ("compressor_page_count", ctypes.c_uint32),
+        ("throttled_count", ctypes.c_uint32),
+        ("external_page_count", ctypes.c_uint32),
+        ("internal_page_count", ctypes.c_uint32),
+        ("total_uncompressed_pages_in_compressor", ctypes.c_uint64),
+    ]
+
+
+_HOST_VM_INFO64 = 4
+
+
+def _vm_statistics() -> tuple[_VmStatistics64, int]:
+    """The machine's page counts (``host_statistics64``) and the page size in bytes."""
+    _require_macos()
+    libc = _libc()
+    libc.mach_host_self.restype = ctypes.c_uint32
+    info = _VmStatistics64()
+    count = ctypes.c_uint32(ctypes.sizeof(info) // 4)
+    rc = libc.host_statistics64(
+        ctypes.c_uint32(libc.mach_host_self()), _HOST_VM_INFO64, ctypes.byref(info),
+        ctypes.byref(count),
+    )
+    if rc != 0:
+        raise OSError(f"host_statistics64 failed: kern_return {rc}")
+    page = ctypes.c_uint64()
+    _sysctl("hw.pagesize", page)
+    return info, int(page.value)
+
+
+def compressor_used() -> int:
+    """Bytes the memory compressor occupies: vm_stat's «Pages occupied by compressor».
+
+    2026-10-24: the Mac hung with the compressor at some 15 GB while the swap the guard watched
+    looked tolerable and the level read 40 %."""
+    info, page = _vm_statistics()
+    return int(info.compressor_page_count) * page
+
+
+def wired_used() -> int:
+    """Bytes of wired memory: vm_stat's «Pages wired down», Metal buffers among them."""
+    info, page = _vm_statistics()
+    return int(info.wire_count) * page
+
+
+def machine_ram() -> int:
+    """The machine's RAM in bytes (``hw.memsize``; the page count elsewhere)."""
+    if sys.platform == "darwin":
+        size = ctypes.c_uint64()
+        _sysctl("hw.memsize", size)
+        return int(size.value)
+    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+
+
 @dataclass(frozen=True)
 class Readers:
     footprint: Callable[[], int]
     swap_used: Callable[[], int]
     level: Callable[[], int]
+    # written as compressor_gb and wired_gb in each sample when given
+    compressor: Callable[[], int] | None = None
+    wired: Callable[[], int] | None = None
 
 
 def system_readers(pid: int | None = None) -> Readers:
     return Readers(
-        footprint=lambda: process_footprint(pid), swap_used=swap_used, level=memorystatus_level
+        footprint=lambda: process_footprint(pid), swap_used=swap_used, level=memorystatus_level,
+        compressor=compressor_used, wired=wired_used,
     )
 
 
@@ -182,6 +262,13 @@ class MemoryMeter:
             "swap_used": self.readers.swap_used(),
             "level": self.readers.level(),
         }
+        for key, reader in (("compressor_gb", self.readers.compressor),
+                            ("wired_gb", self.readers.wired)):
+            if reader is not None:
+                try:
+                    record[key] = round(reader() / 2**30, 2)
+                except OSError:
+                    pass  # the sample keeps what the job's own readings say
         self._write(record)
         return record
 

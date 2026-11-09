@@ -60,7 +60,7 @@ SLEEP = [sys.executable, "-c", "import time; time.sleep(60)"]
 def test_waits_for_memory_then_runs_the_command():
     io, logs = make_io(levels=(30, 35, 90))
     assert run_guarded(PASS, GuardConfig(**QUICK), io) == 0
-    assert any("memory available 30% < 40%" in line for line in logs)
+    assert any("memory available 30% < 35%" in line for line in logs)  # --wait-free default 35
 
 
 def test_gives_up_when_there_is_no_room_in_time():
