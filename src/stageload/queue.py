@@ -194,7 +194,7 @@ def _holds_lane(data: dict[str, Any]) -> bool:
 BLOCKED_FRESH_S = 30.0
 BLOCKED_YIELD_S = 20 * 60.0
 BLOCKED_REFRESH_S = 10.0  # a blocked mark is rewritten at most this often
-_BLOCKED_KEYS = ("blocked", "blocked_at", "blocked_since", "blocked_gpu", "released")
+_BLOCKED_KEYS = ("blocked", "blocked_at", "blocked_since", "blocked_gpu", "blocked_gate", "released")
 
 
 def _yields_turn(data: dict[str, Any], now: float | None = None) -> bool:
@@ -203,7 +203,7 @@ def _yields_turn(data: dict[str, Any], now: float | None = None) -> bool:
     if not data.get("blocked") or not isinstance(at, (int, float)):
         return False
     fresh = now - at < BLOCKED_FRESH_S
-    if data.get("blocked_gpu"):
+    if data.get("blocked_gpu") or data.get("blocked_gate"):
         return fresh
     return fresh and (not isinstance(since, (int, float)) or now - since < BLOCKED_YIELD_S)
 
@@ -226,6 +226,21 @@ def _mark_blocked(
         data["released"] = True
     else:
         data.pop("released", None)
+    _write_json(ticket, data)
+
+
+def _mark_gate_held(ticket: Path, data: dict[str, Any], reason: str, now: float) -> None:
+    """The lane's own gate holds this one ticket (14.11: Windows renders the clip at the head of the
+    Mac's ram lane). The ticket waits for something outside the lane, not for the GPU or its place,
+    so every entry behind it, GPU or not, goes first for as long as the gate holds it."""
+    if (data.get("blocked") == reason and data.get("blocked_gate") and not data.get("blocked_gpu")
+            and isinstance(data.get("blocked_at"), (int, float))
+            and now - data["blocked_at"] < BLOCKED_REFRESH_S):
+        return
+    data.pop("blocked_gpu", None)
+    data.pop("released", None)
+    data.update(blocked=reason, blocked_at=now, blocked_gate=True)
+    data.setdefault("blocked_since", now)
     _write_json(ticket, data)
 
 
@@ -848,7 +863,7 @@ def _wait_turn(
             if not reason:
                 reason = lane_gate(lane_dir, ticket, mine)
                 if reason and mine is not None:
-                    _mark_blocked(ticket, mine, reason, time.time(), gpu=gpu)
+                    _mark_gate_held(ticket, mine, reason, time.time())
             if not reason:
                 if mine is not None:
                     _clear_blocked(ticket, mine)  # the mark is for a turn we could not take

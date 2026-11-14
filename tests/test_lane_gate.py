@@ -64,3 +64,23 @@ def test_each_ticket_has_its_own_answer(tmp_path, monkeypatch):
     ram = lane(tmp_path, "ram")
     assert queue.lane_gate(ram, ram / "1-1.json", {"who": "held", "pid": 1}) == "held by windows"
     assert queue.lane_gate(ram, ram / "2-2.json", {"who": "free", "pid": 2}) == ""
+
+
+def test_a_gpu_clip_held_by_the_gate_lets_the_gpu_clips_behind_it_start(tmp_path, monkeypatch):
+    # 14.11: Windows took the clip at the head of the Mac's ram lane. The gate held it, as it should, but
+    # its ticket said "the GPU is taken", so no GPU clip behind it could start and the Mac stood idle with
+    # 148 clips waiting until Windows finished. The held clip waits for Windows, not for the GPU or its place.
+    ram = lane(tmp_path, "ram")
+    head = ram / f"{100:020d}-100.json"
+    data = {"state": "waiting", "who": "clip-1", "gpu": True}
+    queue._write_json(head, data)
+    queue._mark_gate_held(head, data, "Windows is rendering this clip", 1000.0)
+    nxt = (ram / f"{200:020d}-200.json", {"state": "waiting", "who": "clip-2", "gpu": True})
+    live = [(head, queue.json.loads(head.read_text())), nxt]
+    monkeypatch.setattr(queue.time, "time", lambda: 1005.0)
+    assert queue.lane_ahead(nxt[0], live, {}, None) == ([], "")
+    # still so after the 20 minutes a waiting job may yield, while the gate keeps holding it
+    later = 1000.0 + queue.BLOCKED_YIELD_S + 60
+    live[0][1].update(blocked_at=later - 5)
+    monkeypatch.setattr(queue.time, "time", lambda: later)
+    assert queue.lane_ahead(nxt[0], live, {}, None) == ([], "")
