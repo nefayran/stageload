@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -58,6 +59,7 @@ from .guard import (
     window_rise,
 )
 from .meter import MemoryMeter, Readers, machine_ram, process_footprint
+from . import order as order_rules
 
 DEFAULT_LANE = "ram"
 FAR_POLL_S = 30.0
@@ -334,17 +336,69 @@ def fair_order(tickets: list[tuple[Path, dict[str, Any]]], last: dict[str, int])
     (--deadline, the time what it makes is due) starts before every entry with a later one or
     none. Among entries of one deadline the owner who started least recently goes next, and each
     owner's own entries keep the order they joined in, so one owner's batch takes turns with
-    other owners instead of holding the lane."""
+    other owners instead of holding the lane.
+
+    Before deadlines come the tiers of order.py: a run whose release slot is near, then a short
+    run that is not a video clip; among the rest a floor group takes its part of the lane."""
     waiting = [(p, d) for p, d in tickets if not _holds_lane(d)]
     running = [(p, d) for p, d in tickets if _holds_lane(d)]
     order: list[Path] = []
     clock = dict(last)
-    shares = load_shares(_home_of(tickets))
+    home = _home_of(tickets)
+    shares = load_shares(home)
     used = _share_use(tickets, shares) if shares else None
-    for due in sorted({_deadline(d) for _, d in waiting}):
-        group = running + [(p, d) for p, d in waiting if _deadline(d) == due]
-        order += _turns(group, clock, shares, used)
+    medians = order_rules.kind_medians(home)
+    now = time.time()
+    tiers = {p: order_rules.tier(p.parent.name, d, medians, now) for p, d in waiting}
+    for level, by in ((0, lambda p, d: tiers[p][1]), (1, lambda p, d: _deadline(d)),
+                      (2, lambda p, d: _deadline(d))):
+        mine = [(p, d) for p, d in waiting if tiers[p][0] == level]
+        part: list[Path] = []
+        for due in sorted({by(p, d) for p, d in mine}):
+            group = running + [(p, d) for p, d in mine if by(p, d) == due]
+            part += _turns(group, clock, shares, used)
+        if level == 2 and shares:
+            part = _with_floors(part, dict(waiting), shares, medians)
+        order += part
     return order
+
+
+def _with_floors(
+    order: list[Path],
+    by_path: dict[Path, dict[str, Any]],
+    shares: list[tuple[str, list[str], float]],
+    medians: dict[tuple[str, str], float],
+) -> list[Path]:
+    """``order`` with each floor group's runs moved up while the group's part of the expected run
+    time placed so far is below its floor. Only the runs ahead count, not the last 24 h: a group
+    that waited all day takes one turn in five again, it does not take the lane for hours."""
+    floors = [(g, f) for g, f in order_rules.floors() if any(g == s[0] for s in shares)]
+    if not floors:
+        return order
+    groups = {p: share_group(_owner(by_path[p]), shares)[0] for p in order}
+    queues = {g: deque(p for p in order if groups[p] == g) for g, _ in floors}
+    if not any(queues.values()):
+        return order
+    use: dict[str, float] = {}
+    total = 0.0
+    taken: set[Path] = set()
+    rest = iter(order)
+    out: list[Path] = []
+    while len(out) < len(order):
+        pick = next((q[0] for g, part in floors
+                     if (q := queues[g]) and use.get(g, 0.0) < part * total), None)
+        if pick is None:
+            pick = next(p for p in rest if p not in taken)
+        g = groups[pick]
+        if g in queues and queues[g] and queues[g][0] == pick:
+            queues[g].popleft()
+        taken.add(pick)
+        out.append(pick)
+        found = order_rules.expected_s(pick.parent.name, by_path[pick], medians)
+        cost = float(found if found is not None else SHARE_GUESS_S)
+        use[g] = use.get(g, 0.0) + cost
+        total += cost
+    return out
 
 
 # --- owner shares ---
@@ -410,12 +464,14 @@ def share_report(home: Path, lane: str = "ram") -> list[dict[str, Any]]:
     used = _share_use(tickets or [(lane_dir / "none", {})], shares)
     total_share = sum(s for _, _, s in shares)
     total_used = sum(v for k, v in used.items() if k != "_typical") or 1.0
+    floors = dict(order_rules.floors())
     return [
         {
             "group": g,
             "share": round(100 * s / total_share, 1),
             "used_h": round(used.get(g, 0.0) / 3600, 2),
             "used": round(100 * used.get(g, 0.0) / total_used, 1),
+            "floor": round(100 * floors[g], 1) if g in floors else None,
         }
         for g, _, s in shares
     ]

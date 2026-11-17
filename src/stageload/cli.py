@@ -229,7 +229,9 @@ def _show_queue(args: argparse.Namespace) -> int:
         elif not report:
             print("shares: none (no ~/.stageload/shares, no STAGELOAD_SHARES)")
         for r in report if not args.json else []:
-            print(f"{r['group']:<10} share {r['share']:5.1f} %   used {r['used']:5.1f} %  ({r['used_h']:.2f} h of the last 24 h)")
+            floor = f"   floor {r['floor']:.0f} % of the runs ahead" if r.get("floor") else ""
+            print(f"{r['group']:<10} share {r['share']:5.1f} %   used {r['used']:5.1f} %  "
+                  f"({r['used_h']:.2f} h of the last 24 h){floor}")
         return 0
     rows = list_queue(home, args.lane)
     history = []
