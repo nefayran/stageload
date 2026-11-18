@@ -3,8 +3,12 @@
 Without these tiers a priority deadline on one owner's long batch put it before the runs of
 everyone else, and a release whose slot was hours away waited a day. Before deadlines come:
 
+0. a run on a priority line (a deadline up to 2000-01-01, as a cleaner writes it for a listed
+   --who) expected under ``STAGELOAD_PRIORITY_TINY_S`` seconds (120) that is not a video clip:
+   it holds the lane for a minute or two, so the line's «first» still means first;
 1. a run for an item whose release slot is under ``STAGELOAD_NEAR_SLOT_H`` hours (36) away;
-2. a run expected to take under ``STAGELOAD_SHORT_S`` seconds (900) that is not a MiniMax H3 video clip;
+2. a run expected to take under ``STAGELOAD_SHORT_S`` seconds (900) that is not a MiniMax H3
+   video clip;
 3. the rest in the usual order (deadline, then shares), where a group named in
    ``STAGELOAD_FLOORS`` (``thorn=20``: percent of the lane) takes the next turn while its part of
    the expected run time of the runs placed so far is below that.
@@ -16,15 +20,18 @@ import json
 import os
 import re
 import statistics
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 NEAR_SLOT_H = 36.0
 SHORT_S = 900.0
+PRIORITY_TINY_S = 120.0
 FLOORS = "thorn=20"
 # a real date: deadlines before 2002 are places (priority lines, the planner's tiers), not slots
 _REAL_DATE = datetime(2002, 1, 1).timestamp()
+# a priority line's place: a cleaner writes 1900 + the line's index; a planner's tiers come later
+_PRIORITY = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
 _H3 = re.compile(r"(?<![a-z0-9])h3(?![0-9])|h3_shot|h3_exec|h3-modal|win-h3", re.I)
 _KIND_CACHE: dict[Path, tuple[tuple[int, int], dict[tuple[str, str], float]]] = {}
 
@@ -42,6 +49,10 @@ def near_slot_s() -> float:
 
 def short_s() -> float:
     return _env_float("STAGELOAD_SHORT_S", SHORT_S)
+
+
+def priority_tiny_s() -> float:
+    return _env_float("STAGELOAD_PRIORITY_TINY_S", PRIORITY_TINY_S)
 
 
 def floors() -> list[tuple[str, float]]:
@@ -131,11 +142,16 @@ def expected_s(
 
 def tier(lane: str, data: dict[str, Any], medians: dict[tuple[str, str], float],
          now: float) -> tuple[int, float]:
-    """(0, slot) for a near slot, (1, 0) for a short run, (2, 0) for the rest."""
+    """(0, its priority place) for a tiny priority run, (0, slot) for a near slot, (1, 0) for a
+    short run, (2, 0) for the rest. A priority place lies before 2000, so before every slot."""
+    expect = expected_s(lane, data, medians)
+    place = _ts(data.get("deadline"))
+    if (place is not None and place <= _PRIORITY and expect is not None
+            and expect < priority_tiny_s() and not is_h3(data)):
+        return 0, place
     slot = slot_of(data)
     if slot is not None and slot - now < near_slot_s():
         return 0, slot
-    expect = expected_s(lane, data, medians)
     if expect is not None and expect < short_s() and not is_h3(data):
         return 1, 0.0
     return 2, 0.0

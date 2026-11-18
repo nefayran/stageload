@@ -79,6 +79,26 @@ def test_short_runs_pass_the_h3_backlog(tmp_path, monkeypatch):
     assert whos.index("anomaly_c-c07-voices") > whos.index("drama-ep02-V09ac")
 
 
+def test_a_seconds_long_priority_run_goes_before_near_slots(tmp_path, monkeypatch):
+    # a priority line asks for a 15-second narration first; the lane holds a dozen clips due
+    # within hours and a priority run of two minutes, and the narration sat 29th for five hours
+    lane = _lane(tmp_path, monkeypatch)
+    _history(lane, [("narration-voice", 14 + n % 5, 90000) for n in range(10)]
+             + [(f"anomaly-short-sh{n}-voices", 130 + n % 7, 90000) for n in range(80, 90)])
+    tickets = _tickets(lane, [
+        {"who": f"sh96-c{i}", "cmd": H3_CMD, "slot": _in(2 + i), "expect_s": 700} for i in range(12)
+    ] + [
+        {"who": "anomaly-short-sh104-voices", "deadline": "1904-01-01T00:00Z", "gpu": True},
+        {"who": "narration-voice", "deadline": "1900-01-01T00:00Z", "gpu": True},
+        {"who": "drama-ep02-V09aa", "cmd": H3_CMD, "deadline": DRAMA_FIRST, "expect_s": 734},
+    ])
+    whos = _whos(fair_order(tickets, {}), tickets)
+    assert whos[0] == "narration-voice"
+    assert whos[1] == "sh96-c0"                         # then the near slots, nearest first
+    assert whos.index("anomaly-short-sh104-voices") > whos.index("sh96-c11")   # over 2 min
+    assert whos.index("drama-ep02-V09aa") > whos.index("sh96-c11")      # a priority clip waits
+
+
 def test_thorn_keeps_its_twenty_percent_behind_drama_first(tmp_path, monkeypatch):
     lane = _lane(tmp_path, monkeypatch)
     thorn = [{"who": f"thorn-ep01-V0{i}b", "cmd": H3_CMD, "expect_s": 741} for i in range(10)]
