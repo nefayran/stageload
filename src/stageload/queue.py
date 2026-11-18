@@ -124,7 +124,7 @@ def _alive(pid: int) -> bool:
 
 # Fields another program writes into a waiting entry (a queue planner, a priority list): the run keeps its entry in
 # memory and rewrites it while it waits, so these are taken from the file each time instead of being lost.
-KEPT_FIELDS = ("deadline", "planned_by", "planned_why", "real_deadline", "expect_s", "slot", "risk")
+KEPT_FIELDS = ("deadline", "planned_by", "planned_why", "real_deadline", "expect_s", "slot", "risk", "prefer_lane")
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
