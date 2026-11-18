@@ -17,6 +17,7 @@ What the command never does:
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -25,8 +26,6 @@ from typing import Any
 
 from . import order as order_rules
 from .queue import _HOLDS_LANE, _TICKET, _all_tickets, _owner
-
-import fnmatch
 
 PLACE_ZERO = datetime(2001, 1, 1, tzinfo=timezone.utc)
 PLAN_FIELDS = ("deadline", "planned_by", "planned_why", "prefer_lane")
@@ -43,10 +42,21 @@ def _write(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def plan(home: Path, *, who: str | None = None, owner: str | None = None, lane: str | None = None,
-         place: int | None = None, clear: bool = False, prefer_lane: str | None = None,
-         by: str = "planner", why: str = "", allow_h3: bool = False, dry: bool = False) -> list[dict[str, Any]]:
-    """Apply a place or a lane preference to the waiting runs named; return one row per entry with what was done."""
+def plan(
+    home: Path,
+    *,
+    who: str | None = None,
+    owner: str | None = None,
+    lane: str | None = None,
+    place: int | None = None,
+    clear: bool = False,
+    prefer_lane: str | None = None,
+    by: str = "planner",
+    why: str = "",
+    allow_h3: bool = False,
+    dry: bool = False,
+) -> list[dict[str, Any]]:
+    """Apply a place or a lane preference to the waiting runs named; one row per entry."""
     if who is None and owner is None:
         raise ValueError("name the runs with who or owner")
     if place is None and not clear and prefer_lane is None:
@@ -62,11 +72,20 @@ def plan(home: Path, *, who: str | None = None, owner: str | None = None, lane: 
             continue
         if owner is not None and _owner(data) != owner:
             continue
-        row = {"lane": path.parent.name, "who": name, "state": data.get("state", "waiting"), "done": "", "why": ""}
+        row = {
+            "lane": path.parent.name,
+            "who": name,
+            "state": data.get("state", "waiting"),
+            "done": "",
+            "why": "",
+        }
         if data.get("state") in _HOLDS_LANE:
             row.update(done="skipped", why="it has started or holds its lane's turn")
         elif place is not None and order_rules.is_h3(data) and not allow_h3:
-            row.update(done="skipped", why="an H3 clip's place is the owner's call (pass allow_h3 with his word)")
+            row.update(
+                done="skipped",
+                why="an H3 clip's place is the owner's call (pass allow_h3 with his word)",
+            )
         else:
             new = dict(data)
             if clear:

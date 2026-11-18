@@ -157,19 +157,22 @@ def _parser() -> argparse.ArgumentParser:
     cancel.add_argument("--lane", help="only this lane")
     cancel.add_argument("--dry", action="store_true", help="only list what would be ended")
     plan = sub.add_parser(
-        "plan", help="give waiting runs a place in their lane, or the lane they should take; never a started run")
+        "plan", help="give waiting runs a place, or the lane they should take; never a started run")
     pnamed = plan.add_mutually_exclusive_group(required=True)
     pnamed.add_argument("--who", metavar="PATTERN", help="a glob on the run's --who (quote it)")
     pnamed.add_argument("--owner", metavar="NAME", help="the run's owner, exactly")
     plan.add_argument("--lane", help="only this lane")
     what = plan.add_mutually_exclusive_group()
-    what.add_argument("--first", action="store_true", help="before every run with a later place or deadline")
+    what.add_argument("--first", action="store_true",
+                      help="before every run with a later place or deadline")
     what.add_argument("--place", type=int, metavar="N", help="a place: lower goes sooner (0 is --first)")
     what.add_argument("--clear", action="store_true", help="take a place or lane preference off")
-    plan.add_argument("--prefer-lane", metavar="LANE", help="the lane the run should take when several can run it")
+    plan.add_argument("--prefer-lane", metavar="LANE",
+                      help="the lane the run should take when several can run it")
     plan.add_argument("--by", default="planner", help="who planned it (kept in the entry)")
     plan.add_argument("--why", default="", help="why, in plain words (kept in the entry)")
-    plan.add_argument("--allow-h3", action="store_true", help="also place H3 video clips (only on the owner's word)")
+    plan.add_argument("--allow-h3", action="store_true",
+                      help="also place H3 video clips (only on the owner's word)")
     plan.add_argument("--dry", action="store_true", help="only list what would change")
     requeue = sub.add_parser(
         "requeue", help="queue again the runs a signal ended (exit 143, 137, 130, -15) since a time")
@@ -296,14 +299,16 @@ def _plan(args: argparse.Namespace) -> int:
     if place is None and not args.clear and args.prefer_lane is None:
         print("plan: give --first, --place N, --clear or --prefer-lane", file=sys.stderr)
         return 2
-    rows = plan(default_home(), who=args.who, owner=args.owner, lane=args.lane, place=place, clear=args.clear,
-                prefer_lane=args.prefer_lane, by=args.by, why=args.why, allow_h3=args.allow_h3, dry=args.dry)
+    rows = plan(default_home(), who=args.who, owner=args.owner, lane=args.lane, place=place,
+                clear=args.clear, prefer_lane=args.prefer_lane, by=args.by, why=args.why,
+                allow_h3=args.allow_h3, dry=args.dry)
     if not rows:
         print("plan: no queued run matches", file=sys.stderr)
         return 1
     for r in rows:
-        print(f"{'would ' if args.dry and r['done'] != 'skipped' else ''}{r['done'] or '-':14} {r['lane']:6} "
-              f"{r['state']:8} {r['who']}" + (f"  ({r['why']})" if r["why"] else ""))
+        would = "would " if args.dry and r["done"] != "skipped" else ""
+        why = f"  ({r['why']})" if r["why"] else ""
+        print(f"{would}{r['done'] or '-':14} {r['lane']:6} {r['state']:8} {r['who']}{why}")
     return 0 if any(r["done"] != "skipped" for r in rows) else 1
 
 

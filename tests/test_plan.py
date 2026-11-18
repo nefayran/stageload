@@ -16,12 +16,15 @@ def _ticket(home, lane, n, who, state="waiting", **extra):
     d = home / "queue" / lane
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{n:020d}-{40000 + n}.json"
-    path.write_text(json.dumps({"who": who, "pid": 40000 + n, "state": state, "cmd": ["true"], **extra}))
+    path.write_text(
+        json.dumps({"who": who, "pid": 40000 + n, "state": state, "cmd": ["true"], **extra})
+    )
     return path
 
 
 def _alive(monkeypatch):
     from stageload import queue
+
     monkeypatch.setattr(queue, "_alive", lambda pid: True)
 
 
@@ -32,7 +35,11 @@ def test_first_puts_a_waiting_run_ahead_and_keeps_a_reason(tmp_path, monkeypatch
     rows = plan(tmp_path, who="anomaly-*", place=0, by="director", why="its slot is the nearest")
     assert [r["done"] for r in rows] == ["place 0"]
     data = json.loads(b.read_text())
-    assert (data["deadline"], data["planned_by"], data["planned_why"]) == (place_deadline(0), "director", "its slot is the nearest")
+    assert (data["deadline"], data["planned_by"], data["planned_why"]) == (
+        place_deadline(0),
+        "director",
+        "its slot is the nearest",
+    )
     tickets = [(p, json.loads(p.read_text())) for p in (a, b)]
     assert fair_order(tickets, {})[0] == b
 
@@ -62,9 +69,11 @@ def test_prefer_lane_and_clear(tmp_path, monkeypatch):
     plan(tmp_path, who="sh95-c5", prefer_lane="win", by="director", why="Windows is free")
     data = json.loads(clip.read_text())
     assert (data["prefer_lane"], data["planned_why"]) == ("win", "Windows is free")
-    assert "deadline" not in data                    # a lane preference is not a place
+    assert "deadline" not in data  # a lane preference is not a place
     plan(tmp_path, who="sh95-c5", clear=True)
-    assert not {"prefer_lane", "planned_by", "planned_why", "deadline"} & set(json.loads(clip.read_text()))
+    assert not {"prefer_lane", "planned_by", "planned_why", "deadline"} & set(
+        json.loads(clip.read_text())
+    )
 
 
 def test_dry_changes_nothing_and_the_cli_says_what_it_would_do(tmp_path, monkeypatch, capsys):
@@ -82,9 +91,10 @@ def test_dry_changes_nothing_and_the_cli_says_what_it_would_do(tmp_path, monkeyp
 def test_the_waiting_run_keeps_the_plan_when_it_rewrites_its_entry(tmp_path, monkeypatch):
     _alive(monkeypatch)
     from stageload.queue import _write_json
+
     t = _ticket(tmp_path, "ram", 6, "anomaly-x")
     own = json.loads(t.read_text())
     plan(tmp_path, who="anomaly-x", place=3, prefer_lane="win", why="w")
-    _write_json(t, {**own, "state": "waiting"})       # the run writes its own copy, made before the plan
+    _write_json(t, {**own, "state": "waiting"})  # the run writes its own copy, made before the plan
     data = json.loads(t.read_text())
     assert (data["deadline"], data["prefer_lane"]) == (place_deadline(3), "win")
