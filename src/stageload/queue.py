@@ -773,12 +773,18 @@ def lane_ahead(
     before = [p for p in order[: order.index(ticket)] if not passes(by_path[p])] \
         if ticket in order else []
     ahead = [by_path[p] for p in before]
+    if _tiny(ticket.parent, mine, live):
+        # a run of seconds on a priority line takes the express place when the slots are held:
+        # only an earlier such run goes before it, not the holders or the runs waiting for memory
+        names = ", ".join(str(d.get("who") or d.get("pid")) for d in ahead[:3])
+        return (ahead, f"{len(ahead)} ahead: {names}") if ahead else ([], "")
     # an entry that gave its slot up while it waits for memory holds nothing; once it has yielded
     # for BLOCKED_YIELD_S it goes before the others again, so a large job is not starved
     ahead = [d for p, d in live if d.get("released") and p != ticket
              and not _yields_turn(d, now)] + ahead
+    # a run in the express place holds none of the lane's slots
     holders = [d for p, d in live if _holds_lane(d) and p != ticket and not d.get("released")
-               and not _yields_turn(d, now)]
+               and not d.get("express") and not _yields_turn(d, now)]
     if hold is not None:
         mine = by_path.get(ticket, {})
         if held_for(ticket, mine, hold):
@@ -819,6 +825,23 @@ def _slot_locks(lane_dir: Path) -> list[IO[str]]:
     took, so the slot stays taken while it runs even if the run is killed with SIGKILL."""
     names = ["run.lock"] + [f"run-{i}.lock" for i in range(1, lane_slots(lane_dir.name))]
     return [(lane_dir / name).open("a") for name in names]
+
+
+# One more place beside a lane's slots, only for a run of seconds on a priority line (order.py):
+# two long runs held both ram slots for hours while a 15-second job its line asked to run first
+# waited behind them with the GPU free. The gate, the budget and the GPU still hold it.
+EXPRESS_LOCK = "express.lock"
+
+
+def _tiny(lane_dir: Path, data: dict[str, Any], live: list[tuple[Path, dict[str, Any]]]) -> bool:
+    medians = order_rules.kind_medians(_home_of(live))
+    return order_rules.tiny_priority(lane_dir.name, data, medians) is not None
+
+
+def _with_express(lane_dir: Path, locks: list[IO[str]]) -> None:
+    """The express place joins the run's own locks, after its slots, so a free slot goes first."""
+    if not any(Path(lock.name).name == EXPRESS_LOCK for lock in locks):
+        locks.append((lane_dir / EXPRESS_LOCK).open("a"))
 
 
 def _take_slot(locks: list[IO[str]]) -> IO[str] | None:
@@ -923,12 +946,16 @@ def _wait_turn(
             if not reason:
                 if mine is not None:
                     _clear_blocked(ticket, mine)  # the mark is for a turn we could not take
+                tiny = mine is not None and _tiny(lane_dir, mine, live)
+                if tiny:
+                    _with_express(lane_dir, locks)
                 lock = _take_slot(locks)
                 if lock is not None:
                     if held_for(ticket, dict(live).get(ticket, {}), hold):
                         (lane_dir / "hold.json").unlink(missing_ok=True)  # used up
                     return index, lock
-                reason = "the lane is still held by a command whose run is gone"
+                reason = ("the express place is taken" if tiny
+                          else "the lane is still held by a command whose run is gone")
             reasons.append(reason if len(choices) == 1 else f"{lane_dir.name}: {reason}")
         reason = "; ".join(reasons)
         where = ",".join(lane_dir.name for lane_dir, _, _ in choices)
@@ -1665,6 +1692,10 @@ def run_queued(
                             unused.close()
                 if len(choices) > 1:
                     io.log(f"queue: took the {lane_dir.name} lane of {','.join(lanes)}")
+                if Path(lock.name).name == EXPRESS_LOCK:
+                    entry["express"] = True     # it holds none of the lane's slots
+                    _write_json(ticket, entry)
+                    io.log(f"queue: took the express place of {lane_dir.name}")
             else:
                 lane_dir, entry = choices[0][0], entries[0]
             if lane_dir.name == DEFAULT_LANE:

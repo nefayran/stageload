@@ -140,15 +140,25 @@ def expected_s(
         return None
 
 
+def tiny_priority(lane: str, data: dict[str, Any],
+                  medians: dict[tuple[str, str], float]) -> float | None:
+    """The priority place of a run on a priority line expected under STAGELOAD_PRIORITY_TINY_S
+    that is not a video clip, else None. Such a run also takes the lane's express place."""
+    place = _ts(data.get("deadline"))
+    if place is None or place > _PRIORITY or is_h3(data):
+        return None
+    expect = expected_s(lane, data, medians)
+    return place if expect is not None and expect < priority_tiny_s() else None
+
+
 def tier(lane: str, data: dict[str, Any], medians: dict[tuple[str, str], float],
          now: float) -> tuple[int, float]:
     """(0, its priority place) for a tiny priority run, (0, slot) for a near slot, (1, 0) for a
     short run, (2, 0) for the rest. A priority place lies before 2000, so before every slot."""
-    expect = expected_s(lane, data, medians)
-    place = _ts(data.get("deadline"))
-    if (place is not None and place <= _PRIORITY and expect is not None
-            and expect < priority_tiny_s() and not is_h3(data)):
+    place = tiny_priority(lane, data, medians)
+    if place is not None:
         return 0, place
+    expect = expected_s(lane, data, medians)
     slot = slot_of(data)
     if slot is not None and slot - now < near_slot_s():
         return 0, slot
