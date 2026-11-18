@@ -316,6 +316,7 @@ stageload cancel --who 'render-*'          # a glob on --who; or --owner NAME, a
 stageload cancel --owner alice --lane light --dry
 stageload requeue --since 2026-10-26T15:00Z --owner alice --dry
 stageload reload --owner alice --dry
+stageload plan --who 'render-*' --first --by planner --why "its release is the nearest" --dry
 ```
 
 - `cancel` sends SIGTERM to each matching run. A waiting run exits before its command starts. A
@@ -342,6 +343,13 @@ stageload reload --owner alice --dry
   the same `--who` again when a run ends before it starts. Such runs are ended, and their place is
   kept for ten minutes in `~/.stageload/places/<who>.json` for the next `stageload run` of that
   `--who`.
+- `plan` lets a planner reorder waiting work. `--first` or `--place N` gives the matching waiting
+  runs a place (lower goes sooner), written into each entry as a deadline before 2002 together with
+  `planned_by` and `planned_why`; `--clear` takes it off. `--prefer-lane LANE` records the lane a
+  run should take when more than one can run it, for the program that moves such runs. Started
+  runs, and runs that hold their lane's turn, are never touched. A place only changes the order of
+  waiting runs: the start gates and the memory budget still decide when each one starts. Places
+  for video clips of the H3 model need `--allow-h3`. `--dry` only lists what would change.
 
 ## Use it in your own pipeline
 
