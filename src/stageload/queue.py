@@ -2265,8 +2265,8 @@ NEAR_EXTRA = 4  # resume when at most slots + NEAR_EXTRA runs are ahead
 NEAR_FAR = 3  # the exit code of --near for «not yet»; any other failure counts towards NEAR_FAILS
 NEAR_FAILS = 3  # checks that failed in a row before the loop gives up checking and resumes
 PARK_MARK = "stageload-park-loop"  # in the park loop's text, so a guard pausing a group can leave the loop out
-# 2026-11-19: a parked run used to wake every 60 s and start a Python that read every ticket of its lane; 661 parked H3
-# clips made about 11 such Pythons a second and the Mac's load 283 (every new process is scanned by its security tools).
+# 2026-11-19: a parked run used to wake every 60 s and start a Python that read every ticket of its lane; 661 parked
+# runs made about 11 such Pythons a second and a load average of 283 (every new process was scanned by security tools).
 # Now a parked run sleeps on its own FIFO (queue/<lane>/wake/<ticket>.fifo) with one `cat` and starts nothing; one
 # dispatcher (`stageload dispatch`, launchd every 15 s) reads each lane once and writes to the FIFO of a run that is near
 # the head. The run then asks --near once, as before, and goes back to sleep if it is still far.
