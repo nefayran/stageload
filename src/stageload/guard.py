@@ -35,7 +35,8 @@ Resident = tuple[int, int, str]  # pid, resident bytes, command line
 PAUSE_MAX_S = 600.0
 # the kill floor of a --gpu command, which is never paused: its --kill-free is at least this
 GPU_KILL_LEVEL = 15
-# 2026-10-30: eleven GPU video renders in a week were stopped for swap 7.1-9.6 GB over their start while memory available
+# 2026-10-30: eleven GPU video renders in a week were stopped for swap 7.1-9.6 GB over their start while
+# memory available
 # never fell under 25 %; a --gpu command is never paused, so swap past its budget stops it only under this
 # level or over this much swap machine-wide (a replay of 257 render traces: 0 stops instead of 18)
 
@@ -458,8 +459,9 @@ def group_members(pgid: int) -> list[int]:
 
 
 def park_loops_in(pgid: int) -> set[int]:
-    """The members of a group that are a parked ticket's wait (queue._PARK_LOOP) or its children: the loop shell, its
-    ``sleep`` and its ``--near`` check. 31.10.2026: a job whose command runs ``stageload run`` inside it parks that inner
+    """The members of a group that are a parked ticket's wait (queue._PARK_LOOP) or its children: the loop shell,
+    its ``sleep`` and its ``--near`` check. 31.10.2026: a job whose command runs ``stageload run`` inside it parks
+    that inner
     ticket in the job's own process group; a SIGSTOP of the job then froze the parked check for 5 h and the ram lane
     with it (drama-cn-V10j, its check pid 45322 in state T)."""
     from .queue import PARK_MARK

@@ -100,14 +100,17 @@ def test_the_loop_itself_reports_a_signal(tmp_path):
 def test_a_parked_run_sleeps_until_it_is_woken(tmp_path):
     """2026-11-19: 661 parked clips each woke every 60 s for a Python that read the whole lane (load 283 on the Mac).
     A parked run now starts nothing until the dispatcher writes to its FIFO; then it asks --near once and runs."""
-    import os, time
+    import time
+
     from stageload.queue import wake_path
     fake, log = _fake_py(tmp_path, 0)
     ticket = tmp_path / "ram" / "0001-42.json"
     ticket.parent.mkdir()
     fifo = wake_path(ticket)
     fifo.parent.mkdir()
-    proc = subprocess.Popen(["/bin/sh", "-c", _PARK_LOOP, str(fake), str(ticket.parent), str(ticket), "NS", "SPEC", str(fifo)])
+    proc = subprocess.Popen(
+        ["/bin/sh", "-c", _PARK_LOOP, str(fake), str(ticket.parent), str(ticket), "NS", "SPEC", str(fifo)]
+    )
     _sleeping(fifo, proc)
     time.sleep(1.5)
     assert not log.exists()                       # asleep: not one --near, nothing started
@@ -127,6 +130,7 @@ def test_wake_without_a_sleeper_is_false(tmp_path):
 def test_dispatch_wakes_only_the_runs_near_the_head(tmp_path, monkeypatch):
     """one dispatcher pass reads the lane once and writes only to the FIFOs of parked runs near the head"""
     import os
+
     from stageload import queue
     lane = tmp_path / "queue" / "ram"
     lane.mkdir(parents=True)
@@ -149,6 +153,7 @@ def test_dispatch_checks_only_the_head_of_a_long_lane(tmp_path, monkeypatch):
     """2026-11-19: the exact check of each of 645 parked clips took 16 s of CPU a pass; only the lane's first places
     are checked now"""
     import os
+
     from stageload import queue
     lane = tmp_path / "queue" / "ram"
     lane.mkdir(parents=True)

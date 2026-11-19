@@ -1,5 +1,4 @@
 """A lane's own start check: an executable gates/<lane> under the queue's home."""
-import os
 from pathlib import Path
 
 from stageload import queue

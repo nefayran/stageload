@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
 
+from . import order as order_rules
 from .guard import (
     EXIT_CANNOT_START,
     EXIT_KILLED,
@@ -42,6 +43,7 @@ from .guard import (
     _gb,
     _group_alive,
     _nap,
+    _no_room_reasons,
     _signal_group,
     _signal_name,
     _Signals,
@@ -52,14 +54,12 @@ from .guard import (
     outside_footprint,
     over_gate,
     read_optional,
-    _no_room_reasons,
     start_gate,
     system_io,
     top_resident,
     window_rise,
 )
 from .meter import MemoryMeter, Readers, machine_ram, process_footprint
-from . import order as order_rules
 
 DEFAULT_LANE = "ram"
 FAR_POLL_S = 30.0
@@ -802,7 +802,9 @@ def lane_ahead(
     return ahead, f"{len(ahead)} ahead: {names}"
 
 
-LANE_SLOT_DEFAULTS = {DEFAULT_LANE: 2, "light": 2, "codex": 3, "win": 1, "win-cpu": 2, "giz": 2}  # remote lanes: one slot per machine, more for a hosted service
+LANE_SLOT_DEFAULTS = {
+    DEFAULT_LANE: 2, "light": 2, "codex": 3, "win": 1, "win-cpu": 2, "giz": 2,
+}  # remote lanes: one slot per machine, more for a hosted service
 
 
 def lane_slots(lane: str) -> int:
@@ -883,7 +885,8 @@ def lane_gate(lane_dir: Path, ticket: Path | None = None, data: dict[str, Any] |
     machine behind a remote lane is too hot; the first line it prints is the reason the run
     waits. It runs again at most every 30 s. A gate that cannot run does not stop the lane.
     The gate is told which run asks, so it can hold one run (say, a clip another machine is
-    already rendering) while the rest of the lane goes: STAGELOAD_GATE_WHO, STAGELOAD_GATE_PID and STAGELOAD_GATE_TICKET;
+    already rendering) while the rest of the lane goes: STAGELOAD_GATE_WHO, STAGELOAD_GATE_PID and
+    STAGELOAD_GATE_TICKET;
     each ticket keeps its own answer."""
     gate = lane_dir.parent.parent / "gates" / lane_dir.name
     if not (gate.is_file() and os.access(gate, os.X_OK)):
@@ -899,7 +902,10 @@ def lane_gate(lane_dir: Path, ticket: Path | None = None, data: dict[str, Any] |
     try:
         p = subprocess.run([str(gate)], capture_output=True, text=True, timeout=60, env=env)
         lines = p.stdout.strip().splitlines()
-        reason = "" if p.returncode == 0 else (lines[0] if lines else f"the lane's gate says wait (exit {p.returncode})")[:200]
+        reason = (
+            "" if p.returncode == 0 else
+            (lines[0] if lines else f"the lane's gate says wait (exit {p.returncode})")[:200]
+        )
     except (OSError, subprocess.SubprocessError):
         reason = ""
     _gate_seen[key] = (now, reason)
@@ -1365,7 +1371,8 @@ def is_small_job(entry: dict[str, Any]) -> bool:
             and not UNSEEN_BY_HISTORY.search(str(entry.get("cmd") or "")))
 
 
-# 2026-10-28: jobs of 0.25 GB or less waited hours on a swap that only a big render grows; the level floor still holds them
+# 2026-10-28: jobs of 0.25 GB or less waited hours on a swap that only a big render grows; the level floor still
+# holds them
 def is_tiny_job(entry: dict[str, Any]) -> bool:
     try:
         peak = int(entry["mem_peak"])
@@ -1552,8 +1559,9 @@ def _wait_memory(
             # 30.10: --wait-free (default 35 %) held small jobs at 27 % although their own gate
             # floor is the pause level (25 %); for a small job only its own gate counts
             small = is_small_job(entry)
+            # --wait-free at the gate's level says it once
             reasons += [r for r in _no_room_reasons(config, io, regexes, quiet, idle)
-                        if r not in reasons and not (small and r.startswith("memory available"))]  # --wait-free at the gate's level says it once
+                        if r not in reasons and not (small and r.startswith("memory available"))]
             if released and not reasons:
                 # the way is clear: take a slot back, after whoever ran in it meanwhile. The
                 # blocked marks stay until the real start: a job that waited long keeps its claim
@@ -2268,11 +2276,13 @@ PARK_MARK = "stageload-park-loop"  # in the park loop's text, so a guard pausing
 # 2026-11-19: a parked run used to wake every 60 s and start a Python that read every ticket of its lane; 661 parked
 # runs made about 11 such Pythons a second and a load average of 283 (every new process was scanned by security tools).
 # Now a parked run sleeps on its own FIFO (queue/<lane>/wake/<ticket>.fifo) with one `cat` and starts nothing; one
-# dispatcher (`stageload dispatch`, launchd every 15 s) reads each lane once and writes to the FIFO of a run that is near
+# dispatcher (`stageload dispatch`, launchd every 15 s) reads each lane once and writes to the FIFO of a run that
+# is near
 # the head. The run then asks --near once, as before, and goes back to sleep if it is still far.
 _PARK_LOOP = f"""
 : {PARK_MARK}
-ended() {{ trap - TERM INT HUP; rm -f "$6"; "$0" -m stageload.queue --ended "$2" "$4" "$5" >/dev/null 2>&1; exit "$5"; }}
+ended() {{ trap - TERM INT HUP; rm -f "$6";
+"$0" -m stageload.queue --ended "$2" "$4" "$5" >/dev/null 2>&1; exit "$5"; }}
 trap 'ended "$1" "$2" "$3" "$4" 143 "$5"' TERM
 trap 'ended "$1" "$2" "$3" "$4" 130 "$5"' INT
 trap 'ended "$1" "$2" "$3" "$4" 129 "$5"' HUP

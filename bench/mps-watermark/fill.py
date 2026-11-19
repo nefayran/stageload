@@ -23,7 +23,8 @@ held = []
 try:
     while len(held) * STEP < CAP:
         # random values, not ones: macOS compresses pages of identical values almost to nothing, and the first run
-        # (13.10, default ratio) reached 46 GiB of ones with no error and no swap, which says nothing about model weights
+        # (13.10, default ratio) reached 46 GiB of ones with no error and no swap, which says nothing about
+        # model weights
         held.append(torch.rand(STEP // 2, dtype=torch.float16, device="mps"))
         torch.mps.synchronize()
         print(json.dumps({"t": round(time.time() - t0, 2), "tensors_gib": round(len(held) * STEP / GIB, 2),

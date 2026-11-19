@@ -148,7 +148,10 @@ def _parser() -> argparse.ArgumentParser:
     queue.add_argument(
         "--history", type=int, default=0, metavar="N", help="also show the last N finished runs"
     )
-    queue.add_argument("--shares", action="store_true", help="print each owner group's share and its use of the lane over 24 h")
+    queue.add_argument(
+        "--shares", action="store_true",
+        help="print each owner group's share and its use of the lane over 24 h",
+    )
     cancel = sub.add_parser(
         "cancel", help="end only the queued runs named by --who or --owner, waiting or running")
     named = cancel.add_mutually_exclusive_group(required=True)
@@ -370,6 +373,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "dispatch":
         import time as _time
+
         from stageload import queue as _q
         while True:
             for w in _q.dispatch(_q.default_home()):

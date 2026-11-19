@@ -13,8 +13,9 @@ waiting run on this machine's lanes, oldest first:
 The restarted process gets the old one's environment as the kernel keeps it (KERN_PROCARGS2), its cwd and its stdout
 file, plus STAGELOAD_TICKET_NS=«ns:who», so the new ticket of that who takes the old ticket's time and sorts where it
 stood. The old processes get SIGTERM first, the wrapper before its run, so the wrapper never reports the run's exit and
-no two processes write one log; the few seconds between are the only time the ticket is off the lane. A «reload» line
-goes to cancelled.jsonl, so `stageload requeue` never sends the old run again. Running and paused runs are never touched.
+no two processes write one log; the few seconds between are the only time the ticket is off the lane.
+A «reload» line goes to cancelled.jsonl, so `stageload requeue` never sends the old run again. Running and paused
+runs are never touched.
 """
 from __future__ import annotations
 

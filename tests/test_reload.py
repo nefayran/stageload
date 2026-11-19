@@ -69,9 +69,9 @@ def test_procargs_reads_argv_and_environment():
 def test_a_waiting_run_comes_back_in_its_place_with_its_environment_and_log(tmp_path):
     home = tmp_path
     blocker = _blocker(home)
-    first, second = _detached(home, "t-first", tmp_path / "first.log"), None
+    first = _detached(home, "t-first", tmp_path / "first.log")
     assert _wait(lambda: len(_tickets(home)) == 2)
-    second = _detached(home, "t-second", tmp_path / "second.log")
+    _detached(home, "t-second", tmp_path / "second.log")
     assert _wait(lambda: len(_tickets(home)) == 3)
     before = _tickets(home)
     rows = [r for r in waiting_runs(home) if r["who"] == "t-first"]
@@ -88,8 +88,10 @@ def test_a_waiting_run_comes_back_in_its_place_with_its_environment_and_log(tmp_
     cancelled = [json.loads(x) for x in (home / "cancelled.jsonl").read_text().splitlines()]
     assert cancelled[-1]["reason"] == "reload" and cancelled[-1]["pid"] == first
     blocker.unlink()
-    assert _wait(lambda: "ran" in (tmp_path / "first.log").read_text() and "ran" in (tmp_path / "second.log").read_text(),
-                 timeout=40)
+    assert _wait(
+        lambda: "ran" in (tmp_path / "first.log").read_text() and "ran" in (tmp_path / "second.log").read_text(),
+        timeout=40,
+    )
     assert "stageload reload" in (tmp_path / "first.log").read_text()
     history = [json.loads(x) for x in (home / "history.jsonl").read_text().splitlines()]
     assert [(h["who"], h["exit"]) for h in history if h["who"] == "t-first"][-1] == ("t-first", 0)
@@ -99,9 +101,14 @@ def test_a_run_whose_parent_waits_for_it_is_left_alone(tmp_path):
     home = tmp_path
     _blocker(home)
     env = {**os.environ, **ENV, "STAGELOAD_HOME": str(home)}
-    child = subprocess.Popen([sys.executable, "-m", "stageload", "run", "--lane", "light", "--who", "t-child",
-                              "--what", "test", "--mem-peak", "0.1G", "--wait-free", "0", "--no-trace", "--", sys.executable, "-c", "pass"],
-                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    child = subprocess.Popen(
+        [
+            sys.executable, "-m", "stageload", "run", "--lane", "light", "--who", "t-child",
+            "--what", "test", "--mem-peak", "0.1G", "--wait-free", "0", "--no-trace", "--",
+            sys.executable, "-c", "pass",
+        ],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     try:
         assert _wait(lambda: len(_tickets(home)) == 2)
         lines = []
@@ -115,8 +122,8 @@ def test_a_run_whose_parent_waits_for_it_is_left_alone(tmp_path):
 
 def test_a_wrapper_round_its_run_is_started_again_whole(tmp_path, monkeypatch):
     monkeypatch.setenv("STAGELOAD_RELOAD_WRAPPERS", "render_shot.py:--rewrite")
-    """A wrapper script waits for its run and handles its output: the wrapper is what starts again, and a later run of the same
-    wrapper under another who (a later step) takes a time of its own."""
+    """A wrapper script waits for its run and handles its output: the wrapper is what starts again, and a later run
+    of the same wrapper under another who (a later step) takes a time of its own."""
     home = tmp_path
     blocker = _blocker(home)
     wrapper = tmp_path / "render_shot.py"
@@ -167,7 +174,9 @@ def test_end_for_retry_keeps_the_place_for_the_scripts_own_retry(tmp_path):
         done = reload(home, rows, end_for_retry=True, log=lambda line: None)
         assert done and done[0]["reason"] == "reload-for-retry"
         ns = before[1].split("-")[0]
-        assert _wait(lambda: any(n.startswith(ns) and not n.endswith(f"-{rows[0]['pid']}.json") for n in _tickets(home)))
+        assert _wait(
+            lambda: any(n.startswith(ns) and not n.endswith(f"-{rows[0]['pid']}.json") for n in _tickets(home))
+        )
         after = _tickets(home)
         assert after[0] == before[0] and after[1].startswith(ns) and after[2] == before[2]
         assert not (home / "places").exists() or not list((home / "places").iterdir())

@@ -90,7 +90,8 @@ def _run_limited(tmp_path, logs, swap=int(7.6 * GB), compressor=int(1.3 * GB), l
 
 
 def test_a_runs_own_swap_limit_does_not_hold_on_an_idle_mac(tmp_path, gate):
-    # 2026-10-26: a long job's chunk (--swap-limit 6G --swap-budget 3G) waited on «swap 7.6 GB + budget 3.0 GB > limit 6.0 GB» with
+    # 2026-10-26: a long job's chunk (--swap-limit 6G --swap-budget 3G) waited on «swap 7.6 GB + budget 3.0 GB > limit
+    # 6.0 GB» with
     # the Mac idle (90 % free, compressor 1.3 GB), 67 jobs behind it: the idle rule now covers that check too
     logs = []
     assert _run_limited(tmp_path, logs) == 0

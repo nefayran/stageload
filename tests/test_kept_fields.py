@@ -1,4 +1,5 @@
-"""A waiting run rewrites its entry from memory; the fields a queue planner or a priority list wrote into the file stay."""
+"""A waiting run rewrites its entry from memory; the fields a queue planner or a priority list wrote into the
+file stay."""
 import json
 
 from stageload.queue import KEPT_FIELDS, _write_json
