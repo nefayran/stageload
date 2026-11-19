@@ -375,3 +375,29 @@ def test_a_job_that_did_not_grow_is_never_the_one_paused_while_another_grew(our_
     for mine in (None, 0, 100 * MB):
         verdict, target, _ = queue_culprit(mine, [flat, build()], 512 * MB)
         assert verdict == "theirs" and not target.me
+
+
+def test_a_job_past_its_peak_counts_at_its_measured_footprint(tmp_path):
+    # 19.11.2026: w18-vo-takes peaked at 16.7 GB early, then ran at 1.5 GB for over an hour while
+    # its 18 GB claim kept SH95's build and the voices of six Shorts waiting
+    lane_dir = tmp_path / "queue" / "ram"
+    lane_dir.mkdir(parents=True)
+    trace = _trace(tmp_path / "t.jsonl", [16 * GB] * 10 + [int(1.5 * GB)] * 1400, interval=1.0)
+    (lane_dir / f"{1:020d}-{os.getpid()}.json").write_text(json.dumps(
+        {"pid": os.getpid(), "who": "w18-vo-takes", "lane": "ram", "state": "running",
+         "mem_peak": 18 * GB, "trace": str(trace)}))
+    reason = budget_reason(tmp_path, tmp_path / "queue" / "ram" / "x.json", 16 * GB,
+                           GuardConfig(reserve=16 * GB), 48 * GB)
+    assert reason == ""  # 1.5 x 1.3 -> 2 GB floor + 16 + 16 fit in 48
+
+
+def test_a_young_job_counts_at_its_claim(tmp_path):
+    lane_dir = tmp_path / "queue" / "ram"
+    lane_dir.mkdir(parents=True)
+    trace = _trace(tmp_path / "t.jsonl", [int(1.5 * GB)] * 100, interval=1.0)
+    (lane_dir / f"{1:020d}-{os.getpid()}.json").write_text(json.dumps(
+        {"pid": os.getpid(), "who": "w18-vo-takes", "lane": "ram", "state": "running",
+         "mem_peak": 18 * GB, "trace": str(trace)}))
+    reason = budget_reason(tmp_path, tmp_path / "queue" / "ram" / "x.json", 16 * GB,
+                           GuardConfig(reserve=16 * GB), 48 * GB)
+    assert reason.startswith("budget: running 18.0 GB")

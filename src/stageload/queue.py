@@ -1247,6 +1247,52 @@ def ticket_peak(data: dict[str, Any], peaks: dict[str, int]) -> int:
                         lane=data.get("lane"))[0]
 
 
+SETTLED_S = 600          # a running job counts at its measured footprint once it has run this long
+SETTLED_FACTOR = 1.3     # headroom over the largest footprint of its last SETTLED_S
+SETTLED_FLOOR = 2 * GB   # never counted below this
+
+
+def settled_footprint(data: dict[str, Any], window_s: float = SETTLED_S) -> int | None:
+    """A running job's largest footprint over the last ``window_s`` of its trace, or None while it
+    has run less than that or has no readable trace. 19.11.2026: w18-vo-takes peaked at 16.7 GB
+    in its first minutes, then ran over an hour at 1.5 GB while its 18 GB claim kept every other
+    ram job waiting with the Mac 90 % free."""
+    path = data.get("trace")
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 400_000))
+            tail = fh.read().decode("utf-8", "replace").splitlines()[1:]
+    except OSError:
+        return None
+    rows = []
+    for line in tail:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("type") == "sample" and "t" in row and "footprint" in row:
+            rows.append((float(row["t"]), int(row["footprint"])))
+    if not rows or rows[-1][0] < window_s:
+        return None
+    last = rows[-1][0]
+    return max(fp for t, fp in rows if t >= last - window_s)
+
+
+def counted_peak(data: dict[str, Any], peaks: dict[str, int]) -> int:
+    """What a running job takes from the budget: its claim until it has run SETTLED_S, then its
+    measured footprint of the last SETTLED_S times SETTLED_FACTOR (never above the claim, never
+    below SETTLED_FLOOR)."""
+    claim = ticket_peak(data, peaks)
+    seen = settled_footprint(data)
+    if seen is None:
+        return claim
+    return min(claim, max(SETTLED_FLOOR, int(seen * SETTLED_FACTOR)))
+
+
 def budget_reason(
     home: Path, ticket: Path, own: int, config: GuardConfig, ram: int
 ) -> str:
@@ -1260,7 +1306,7 @@ def budget_reason(
     for lane_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name not in remote):
         for path, data in _live_tickets(lane_dir):
             if path != ticket and data.get("state") in _RUNS:
-                running.append((data, ticket_peak(data, peaks)))
+                running.append((data, counted_peak(data, peaks)))
     used = sum(peak for _, peak in running)
     if not running or used + own + config.reserve <= ram:
         return ""
