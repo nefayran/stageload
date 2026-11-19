@@ -188,6 +188,10 @@ def _parser() -> argparse.ArgumentParser:
     reload.add_argument("--end-for-retry", action="store_true",
                         help="also end the runs whose parent waits for them, keeping their place 10 min for the "
                         "script's own retry of the same --who (only for scripts that do retry)")
+    disp = sub.add_parser(
+        "dispatch", help="wake the parked runs near their lane's head (one pass; launchd runs it every 15 s)")
+    disp.add_argument("--every", type=float, default=0, metavar="S",
+                      help="keep running, one pass every S seconds (0: one pass and exit)")
     summary = sub.add_parser("summary", help="print the summary of a trace file as JSON")
     summary.add_argument("trace")
     return parser
@@ -364,6 +368,15 @@ def _run_args(raw: Sequence[str], args: argparse.Namespace) -> list[str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "dispatch":
+        import time as _time
+        from stageload import queue as _q
+        while True:
+            for w in _q.dispatch(_q.default_home()):
+                print(f"woke {w}", flush=True)
+            if not args.every:
+                return 0
+            _time.sleep(args.every)
     if args.command == "summary":
         print(json.dumps(summarize(read_trace(args.trace)), indent=2))
         return 0

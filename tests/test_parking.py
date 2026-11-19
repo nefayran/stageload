@@ -63,23 +63,83 @@ def test_the_spec_alone_is_enough_for_the_history_line(tmp_path):
     assert record["cmd"] == "zsh h3.sh" and record["owner"] == "sh64"
 
 
-def test_the_loop_itself_reports_a_signal(tmp_path):
-    """2026-11-04: `ended` was called with no arguments, so inside it $2, $4 and $5 were empty
-    (a shell function has positional parameters of its own); every parked run that a restart of
-    the Mac ended wrote no history line and died with «exit: : numeric argument required»."""
-    import os, signal, time
+def _fake_py(tmp_path, near_rc):
     log = tmp_path / "calls"
     fake = tmp_path / "py"
     fake.write_text("#!/bin/sh\n"
                     f"echo \"$*\" >> {log}\n"
-                    f"[ \"$3\" = --near ] && exit {NEAR_FAR}\n"
+                    f"[ \"$3\" = --near ] && exit {near_rc}\n"
                     "exit 0\n")
     fake.chmod(0o755)
-    loop = _PARK_LOOP.replace("sleep 60", "sleep 0.2")
-    proc = subprocess.Popen(["/bin/sh", "-c", loop, str(fake), "LANE", "TICKET", "NS", "SPEC"])
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not (log.exists() and "--near" in log.read_text()):
+    return fake, log
+
+
+def _sleeping(fifo, proc, seconds=10):
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not fifo.exists():
         time.sleep(0.05)
+    time.sleep(0.3)   # its cat is on the FIFO now
+
+
+def test_the_loop_itself_reports_a_signal(tmp_path):
+    """2026-11-04: `ended` was called with no arguments, so inside it $2, $4 and $5 were empty
+    (a shell function has positional parameters of its own); every parked run that a restart of
+    the Mac ended wrote no history line and died with «exit: : numeric argument required»."""
+    import signal
+    fake, log = _fake_py(tmp_path, NEAR_FAR)
+    fifo = tmp_path / "t.fifo"
+    proc = subprocess.Popen(["/bin/sh", "-c", _PARK_LOOP, str(fake), "LANE", "TICKET", "NS", "SPEC", str(fifo)])
+    _sleeping(fifo, proc)
     proc.send_signal(signal.SIGTERM)
     assert proc.wait(timeout=10) == 143
     assert "-m stageload.queue --ended TICKET SPEC 143" in log.read_text()
+    assert not fifo.exists()
+
+
+def test_a_parked_run_sleeps_until_it_is_woken(tmp_path):
+    """2026-11-19: 661 parked clips each woke every 60 s for a Python that read the whole lane (load 283 on the Mac).
+    A parked run now starts nothing until the dispatcher writes to its FIFO; then it asks --near once and runs."""
+    import os, time
+    from stageload.queue import wake_path
+    fake, log = _fake_py(tmp_path, 0)
+    ticket = tmp_path / "ram" / "0001-42.json"
+    ticket.parent.mkdir()
+    fifo = wake_path(ticket)
+    fifo.parent.mkdir()
+    proc = subprocess.Popen(["/bin/sh", "-c", _PARK_LOOP, str(fake), str(ticket.parent), str(ticket), "NS", "SPEC", str(fifo)])
+    _sleeping(fifo, proc)
+    time.sleep(1.5)
+    assert not log.exists()                       # asleep: not one --near, nothing started
+    from stageload.queue import wake
+    assert wake(ticket)
+    assert proc.wait(timeout=10) == 0
+    calls = log.read_text().splitlines()
+    assert calls[0].startswith("-m stageload.queue --near") and calls[1] == "-m stageload.queue SPEC"
+    assert not fifo.exists()
+
+
+def test_wake_without_a_sleeper_is_false(tmp_path):
+    from stageload.queue import wake
+    assert wake(tmp_path / "ram" / "0001-1.json") is False
+
+
+def test_dispatch_wakes_only_the_runs_near_the_head(tmp_path, monkeypatch):
+    """one dispatcher pass reads the lane once and writes only to the FIFOs of parked runs near the head"""
+    import os
+    from stageload import queue
+    lane = tmp_path / "queue" / "ram"
+    lane.mkdir(parents=True)
+    me = os.getpid()
+    paths = []
+    for i in range(20):
+        p = lane / f"{i + 1:020d}-{me}.json"
+        p.write_text(json.dumps({"who": f"clip-{i}", "pid": me, "state": "waiting", "parked": "2026-11-19T12:00:00Z"}))
+        paths.append(p)
+    monkeypatch.setattr(queue, "_alive", lambda pid: True)
+    woke = []
+    monkeypatch.setattr(queue, "wake", lambda t: woke.append(t.name) or True)
+    out = queue.dispatch(tmp_path)
+    near = queue.lane_slots("ram") + queue.NEAR_EXTRA
+    assert woke == [p.name for p in paths[: near + 1]]       # runs with at most slots + NEAR_EXTRA ahead
+    assert out[0] == "ram:clip-0"

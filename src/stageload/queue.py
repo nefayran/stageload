@@ -2261,36 +2261,82 @@ def requeue(home: Path, plan: list[tuple[dict[str, Any], str]], dry: bool = Fals
 # (the cleaner may have set one) and the time it was first queued. A signal ends the loop as it
 # ended the waiter: a history line with the state «waiting», so `stageload requeue` finds it.
 
-PARK_CHECK_S = 60
 NEAR_EXTRA = 4  # resume when at most slots + NEAR_EXTRA runs are ahead
 NEAR_FAR = 3  # the exit code of --near for «not yet»; any other failure counts towards NEAR_FAILS
 NEAR_FAILS = 3  # checks that failed in a row before the loop gives up checking and resumes
 PARK_MARK = "stageload-park-loop"  # in the park loop's text, so a guard pausing a group can leave the loop out
+# 2026-11-19: a parked run used to wake every 60 s and start a Python that read every ticket of its lane; 661 parked H3
+# clips made about 11 such Pythons a second and the Mac's load 283 (every new process is scanned by its security tools).
+# Now a parked run sleeps on its own FIFO (queue/<lane>/wake/<ticket>.fifo) with one `cat` and starts nothing; one
+# dispatcher (`stageload dispatch`, launchd every 15 s) reads each lane once and writes to the FIFO of a run that is near
+# the head. The run then asks --near once, as before, and goes back to sleep if it is still far.
 _PARK_LOOP = f"""
 : {PARK_MARK}
-ended() {{ trap - TERM INT HUP; "$0" -m stageload.queue --ended "$2" "$4" "$5" >/dev/null 2>&1; exit "$5"; }}
-trap 'ended "$1" "$2" "$3" "$4" 143' TERM
-trap 'ended "$1" "$2" "$3" "$4" 130' INT
-trap 'ended "$1" "$2" "$3" "$4" 129' HUP
+ended() {{ trap - TERM INT HUP; rm -f "$6"; "$0" -m stageload.queue --ended "$2" "$4" "$5" >/dev/null 2>&1; exit "$5"; }}
+trap 'ended "$1" "$2" "$3" "$4" 143 "$5"' TERM
+trap 'ended "$1" "$2" "$3" "$4" 130 "$5"' INT
+trap 'ended "$1" "$2" "$3" "$4" 129 "$5"' HUP
 fails=0
 while :; do
-  sleep {PARK_CHECK_S} & wait $! || true
+  [ -p "$5" ] || mkfifo "$5" 2>/dev/null || sleep 60
+  cat "$5" >/dev/null 2>&1 & wait $! || true
   "$0" -m stageload.queue --near "$1" "$2"; rc=$?
   [ "$rc" -eq 0 ] && break
   if [ "$rc" -eq {NEAR_FAR} ]; then fails=0; else fails=$((fails + 1)); [ "$fails" -ge {NEAR_FAILS} ] && break; fi
 done
 trap - TERM INT HUP
+rm -f "$5"
 STAGELOAD_TICKET_NS="$3" exec "$0" -m stageload.queue "$4"
 """
 
 
-def near_head(lane_dir: Path, ticket: Path) -> bool:
-    live = _live_tickets(lane_dir)
+def wake_path(ticket: Path) -> Path:
+    """the FIFO a parked run sleeps on"""
+    return ticket.parent / "wake" / f"{ticket.stem}.fifo"
+
+
+def wake(ticket: Path) -> bool:
+    """write to a parked run's FIFO so it checks its place now; False when nobody sleeps on it"""
+    fifo = wake_path(ticket)
+    try:
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:     # no FIFO, or no reader on it
+        return False
+    try:
+        os.write(fd, b"1")
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return True
+
+
+def near_in(lane_dir: Path, ticket: Path, live: list[tuple[Path, dict[str, Any]]],
+            starts: dict[str, int], hold: dict[str, Any] | None) -> bool:
     if ticket not in dict(live):
         return True
-    ahead, _ = lane_ahead(ticket, live, _last_starts(lane_dir), _active_hold(lane_dir),
-                          lane_slots(lane_dir.name))
+    ahead, _ = lane_ahead(ticket, live, starts, hold, lane_slots(lane_dir.name))
     return len(ahead) <= lane_slots(lane_dir.name) + NEAR_EXTRA
+
+
+def dispatch(home: Path) -> list[str]:
+    """one pass: every lane read once; the parked runs near their lane's head are woken. Returns who was woken."""
+    woken = []
+    root = home / "queue"
+    for lane_dir in sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []:
+        live = _live_tickets(lane_dir)
+        parked = [p for p, d in live if d.get("parked") and d.get("state") != "running"]
+        if not parked:
+            continue
+        starts, hold = _last_starts(lane_dir), _active_hold(lane_dir)
+        for p in parked:
+            if near_in(lane_dir, p, live, starts, hold) and wake(p):
+                woken.append(f"{lane_dir.name}:{dict(live)[p].get('who')}")
+    return woken
+
+
+def near_head(lane_dir: Path, ticket: Path) -> bool:
+    return near_in(lane_dir, ticket, _live_tickets(lane_dir), _last_starts(lane_dir), _active_hold(lane_dir))
 
 
 def _park(lane_dir: Path, ticket: Path, cmd: Sequence[str], config: GuardConfig, *,
@@ -2316,8 +2362,14 @@ def _park(lane_dir: Path, ticket: Path, cmd: Sequence[str], config: GuardConfig,
     py = sys.executable
     sys.stdout.flush()
     sys.stderr.flush()
+    fifo = wake_path(ticket)
+    fifo.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkfifo(fifo)
+    except FileExistsError:
+        pass
     os.execv("/bin/sh", ["/bin/sh", "-c", _PARK_LOOP, py, str(lane_dir), str(ticket),
-                         f"{int(ns)}:{who}", str(spec)])
+                         f"{int(ns)}:{who}", str(spec), str(fifo)])
 
 
 def parked_ended(ticket: Path, spec: Path, code: int) -> None:
