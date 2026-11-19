@@ -2329,8 +2329,12 @@ def dispatch(home: Path) -> list[str]:
         if not parked:
             continue
         starts, hold = _last_starts(lane_dir), _active_hold(lane_dir)
+        # the lane's order once; only the parked runs in its first places get the exact check (the exact check of
+        # every parked run was quadratic: 16 s of CPU a pass with 645 parked clips)
+        order = fair_order(live, starts)
+        head = set(order[: 3 * (lane_slots(lane_dir.name) + NEAR_EXTRA) + 10])
         for p in parked:
-            if near_in(lane_dir, p, live, starts, hold) and wake(p):
+            if p in head and near_in(lane_dir, p, live, starts, hold) and wake(p):
                 woken.append(f"{lane_dir.name}:{dict(live)[p].get('who')}")
     return woken
 

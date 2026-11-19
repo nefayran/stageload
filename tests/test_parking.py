@@ -143,3 +143,22 @@ def test_dispatch_wakes_only_the_runs_near_the_head(tmp_path, monkeypatch):
     near = queue.lane_slots("ram") + queue.NEAR_EXTRA
     assert woke == [p.name for p in paths[: near + 1]]       # runs with at most slots + NEAR_EXTRA ahead
     assert out[0] == "ram:clip-0"
+
+
+def test_dispatch_checks_only_the_head_of_a_long_lane(tmp_path, monkeypatch):
+    """2026-11-19: the exact check of each of 645 parked clips took 16 s of CPU a pass; only the lane's first places
+    are checked now"""
+    import os
+    from stageload import queue
+    lane = tmp_path / "queue" / "ram"
+    lane.mkdir(parents=True)
+    for i in range(300):
+        (lane / f"{i + 1:020d}-{os.getpid()}.json").write_text(
+            json.dumps({"who": f"clip-{i}", "pid": os.getpid(), "state": "waiting", "parked": "x"}))
+    monkeypatch.setattr(queue, "_alive", lambda pid: True)
+    monkeypatch.setattr(queue, "wake", lambda t: True)
+    calls = []
+    real = queue.near_in
+    monkeypatch.setattr(queue, "near_in", lambda *a: calls.append(1) or real(*a))
+    queue.dispatch(tmp_path)
+    assert len(calls) <= 3 * (queue.lane_slots("ram") + queue.NEAR_EXTRA) + 10
