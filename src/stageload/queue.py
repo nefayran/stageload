@@ -1299,26 +1299,73 @@ def counted_peak(data: dict[str, Any], peaks: dict[str, int]) -> int:
     return min(claim, max(SETTLED_FLOOR, int(seen * SETTLED_FACTOR)))
 
 
+def _utc_seconds(value: Any) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def budget_reservation(
+    tickets: list[tuple[Path, dict[str, Any]]], peaks: dict[str, int], config: GuardConfig, ram: int,
+    now: float | None = None,
+) -> tuple[Path, dict[str, Any], int] | None:
+    """The one waiting job whose memory the budget keeps free: (ticket, entry, peak), or None.
+
+    The budget counts only running jobs, so a big job could wait for memory for hours while smaller
+    jobs of other lanes kept starting beside it and taking the room it waited for; a --gpu job also
+    keeps the GPU's turn while it waits, so the GPU stood idle. A job that has had its turn for
+    BLOCKED_YIELD_S and still waits for the budget reserves its peak, so no new job passes it any
+    more; it starts once the runs that passed it end.
+    Only the oldest such job reserves, and it never counts itself, so two big jobs never hold each
+    other. It reserves only while the jobs that ran before its turn leave room for it: a job kept out
+    by an older long run does not hold every other job back for that run's whole length."""
+    now = time.time() if now is None else now
+    waiting = []
+    for path, data in tickets:
+        since = _utc_seconds(data.get("turn"))
+        if (data.get("state") == "mem-wait" and "budget:" in str(data.get("mem_wait") or "")
+                and since is not None and now - since >= BLOCKED_YIELD_S):
+            waiting.append((since, path, data))
+    if not waiting:
+        return None
+    since, path, data = min(waiting, key=lambda w: (w[0], w[1].name))
+    peak = ticket_peak(data, peaks)
+    older = sum(counted_peak(d, peaks) for p, d in tickets if p != path and d.get("state") in _RUNS
+                and (_utc_seconds(d.get("started")) or now) < since)
+    if older + peak + config.reserve > ram:
+        return None
+    return path, data, peak
+
+
 def budget_reason(
     home: Path, ticket: Path, own: int, config: GuardConfig, ram: int
 ) -> str:
     """Why the job does not fit the machine's budget ("" when it does): the predicted peaks of the
-    running jobs of every lane, private lanes too, plus its own, plus the reserve, over the RAM.
+    running jobs of every lane, private lanes too, plus the peak a long-waiting job reserves
+    (budget_reservation; not for a small job), plus its own, plus the reserve, over the RAM.
     A job that does not fit even alone starts only when nothing else runs."""
     peaks = history_peaks(home)
-    running = []
+    running, tickets = [], []
     root = home / "queue"
     remote = remote_lanes()
     for lane_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name not in remote):
         for path, data in _live_tickets(lane_dir):
+            tickets.append((path, data))
             if path != ticket and data.get("state") in _RUNS:
                 running.append((data, counted_peak(data, peaks)))
+    held = budget_reservation(tickets, peaks, config, ram) if own > small_job_limit() else None
+    if held and held[0] == ticket:
+        held = None
+    kept = held[2] if held else 0
     used = sum(peak for _, peak in running)
-    if not running or used + own + config.reserve <= ram:
+    if (not running and not held) or used + kept + own + config.reserve <= ram:
         return ""
     names = ", ".join(f"{d.get('who') or d.get('pid')} ({d.get('lane')}) {peak / GB:.0f} GB"
                       for d, peak in sorted(running, key=lambda r: -r[1])[:3])
-    return (f"budget: running {_gb(used)} ({names}) + ours {_gb(own)} + reserve "
+    kept_words = (f" + kept {_gb(kept)} for {held[1].get('who') or held[1].get('pid')} "
+                  f"({held[1].get('lane')}), waiting since {held[1].get('turn')}") if held else ""
+    return (f"budget: running {_gb(used)} ({names}){kept_words} + ours {_gb(own)} + reserve "
             f"{_gb(config.reserve)} > RAM {_gb(ram)}")
 
 

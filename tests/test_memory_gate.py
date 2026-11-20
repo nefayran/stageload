@@ -187,6 +187,55 @@ def test_the_budget_holds_a_second_big_job_and_lets_a_small_one_through(tmp_path
             "12.0 GB > RAM 48.0 GB") in wait
 
 
+def _budget_waiting_ticket(home, lane, who, mem_peak, waited_s):
+    """A --gpu job of another session that has had its turn for ``waited_s`` and waits for the budget."""
+    lane_dir = home / "queue" / lane
+    lane_dir.mkdir(parents=True, exist_ok=True)
+    ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
+    turn = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - waited_s))
+    ticket.write_text(json.dumps({
+        "pid": os.getpid(), "who": who, "lane": lane, "cmd": "python3 render.py", "gpu": True,
+        "state": "mem-wait", "turn": turn, "mem_peak": mem_peak,
+        "mem_wait": "budget: running 16.0 GB + ours 25.0 GB + reserve 12.0 GB > RAM 48.0 GB"}))
+    return ticket
+
+
+def test_a_job_long_waiting_for_the_budget_keeps_its_memory_from_new_jobs(tmp_path, gate):
+    # 20.11: a 25 GB render waited for the budget while films kept starting in light, and the GPU stood idle
+    film = _running_ticket(tmp_path, "light", "w14-film", mem_peak=8 * GB)
+    render = _budget_waiting_ticket(tmp_path, "ram", "now-render", 25 * GB, waited_s=25 * 60)
+    config, new = GuardConfig(), tmp_path / "queue" / "light" / "new.json"
+    # 8 running + 8 new + 12 reserve = 28 GB of 48 would fit; with the 25 GB kept for the render it does not
+    why = queue.budget_reason(tmp_path, new, 8 * GB, config, 48 * GB)
+    assert "kept 25.0 GB for now-render (ram)" in why
+    # the render itself is not held by its own reservation: it starts once the film is gone
+    film.unlink()
+    assert queue.budget_reason(tmp_path, render, 25 * GB, config, 48 * GB) == ""
+    # a small job still passes
+    assert queue.budget_reason(tmp_path, new, GB // 2, config, 48 * GB) == ""
+
+
+def test_a_fresh_budget_wait_or_one_kept_out_by_an_older_run_reserves_nothing(tmp_path, gate):
+    config, new = GuardConfig(), tmp_path / "queue" / "light" / "new.json"
+    _running_ticket(tmp_path, "light", "w14-film", mem_peak=8 * GB)
+    fresh = _budget_waiting_ticket(tmp_path, "ram", "now-render", 25 * GB, waited_s=5 * 60)
+    assert queue.budget_reason(tmp_path, new, 8 * GB, config, 48 * GB) == ""
+    fresh.unlink()
+    # a 30 GB run that started before the render's turn leaves no room for it: nothing is kept yet
+    _running_ticket(tmp_path, "now-cpu", "now-sim", mem_peak=30 * GB)
+    _budget_waiting_ticket(tmp_path, "ram", "now-render", 25 * GB, waited_s=25 * 60)
+    assert "kept" not in queue.budget_reason(tmp_path, new, 2 * GB, config, 48 * GB)
+
+
+def test_of_two_jobs_waiting_for_the_budget_only_the_oldest_reserves(tmp_path, gate):
+    config = GuardConfig()
+    old = _budget_waiting_ticket(tmp_path, "ram", "render-a", 20 * GB, waited_s=40 * 60)
+    young = _budget_waiting_ticket(tmp_path, "h3b", "render-b", 20 * GB, waited_s=30 * 60)
+    _running_ticket(tmp_path, "light", "film", mem_peak=4 * GB)
+    assert "kept 20.0 GB for render-a" in queue.budget_reason(tmp_path, young, 20 * GB, config, 48 * GB)
+    assert "kept" not in queue.budget_reason(tmp_path, old, 20 * GB, config, 48 * GB)
+
+
 def test_a_job_of_a_private_lane_counts_even_without_a_written_peak(tmp_path, gate):
     # a run of the stageload before this one wrote no peak: it is predicted from its history
     (tmp_path / "history.jsonl").write_text(json.dumps(
