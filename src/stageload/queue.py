@@ -396,6 +396,8 @@ def _with_floors(
         out.append(pick)
         found = order_rules.expected_s(pick.parent.name, by_path[pick], medians)
         cost = float(found if found is not None else SHARE_GUESS_S)
+        if by_path[pick].get("blocked_gate") and _yields_turn(by_path[pick]):
+            cost = 0.0      # 20.11: the gate holds it while another machine renders it; it takes none of this lane
         use[g] = use.get(g, 0.0) + cost
         total += cost
     return out

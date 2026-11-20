@@ -152,3 +152,20 @@ def test_an_h3_clip_with_a_tiny_guess_costs_what_h3_clips_really_take(tmp_path, 
     tickets = _tickets(lane, _drama_clips(20) + thorn)
     whos = _whos(fair_order(tickets, {}), tickets)
     assert sum(w.startswith("thorn-") for w in whos[:20]) <= 4      # one clip in five, by real run time
+
+
+def test_a_clip_windows_renders_does_not_count_as_the_lanes_run_ahead(tmp_path, monkeypatch):
+    """20.11 21:38Z and 22:00Z: the head W20 clip was rendered on Windows (the ram gate held its Mac ticket); the
+    floor still counted it as the lane's run ahead, so thorn took the second place and started on the Mac GPU every
+    time, twice in a row, while four more W20 clips waited behind it."""
+    import time
+
+    lane = _lane(tmp_path, monkeypatch)
+    held = {"who": "drama-ep02-V09zz", "cmd": H3_CMD, "deadline": DRAMA_FIRST, "expect_s": 734,
+            "blocked": "Windows is rendering this clip (win-h3, since 2026-11-20T21:47:00Z)",
+            "blocked_at": time.time(), "blocked_since": time.time() - 600, "blocked_gate": True}
+    thorn = [{"who": f"thorn-ep01-V0{i}b", "cmd": H3_CMD, "expect_s": 741} for i in range(3)]
+    tickets = _tickets(lane, [held] + _drama_clips(4) + thorn)
+    whos = _whos(fair_order(tickets, {}), tickets)
+    assert whos[0] == "drama-ep02-V09zz"
+    assert whos[1].startswith("drama-")          # the Mac's own next run: a drama clip, not thorn
