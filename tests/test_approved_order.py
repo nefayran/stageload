@@ -135,3 +135,20 @@ def test_shares_report_names_the_floor(tmp_path, monkeypatch):
     report = {r["group"]: r for r in share_report(lane.parent.parent)}
     assert report["thorn"]["floor"] == 20.0
     assert report["drama"]["floor"] is None
+
+
+def test_an_h3_clip_with_a_tiny_guess_costs_what_h3_clips_really_take(tmp_path, monkeypatch):
+    """A floor group's clips that guess 140 s, or whose kind's only finished runs found the clip already made (0.1 s),
+    still cost what H3 clips take (~1400 s); counted at a tenth, the group took about twice its part of the lane."""
+    lane = _lane(tmp_path, monkeypatch)
+    with open(lane.parent.parent / "history.jsonl", "w") as f:
+        for i in range(5):
+            f.write(json.dumps({"lane": "ram", "who": f"wide-w20-c{i:03d}", "run_s": 1400, "exit": 0,
+                                "cmd": H3_CMD}) + "\n")
+        for i in range(10):     # a clip already made exits 0 in 0.1 s: not what a clip takes
+            f.write(json.dumps({"lane": "ram", "who": f"thorn-ep01-V1{i}a{chr(97 + i)}", "run_s": 0.1, "exit": 0,
+                                "cmd": H3_CMD}) + "\n")
+    thorn = [{"who": f"thorn-ep01-V0{i}a{chr(97 + i)}", "cmd": H3_CMD, "expect_s": 140} for i in range(10)]
+    tickets = _tickets(lane, _drama_clips(20) + thorn)
+    whos = _whos(fair_order(tickets, {}), tickets)
+    assert sum(w.startswith("thorn-") for w in whos[:20]) <= 4      # one clip in five, by real run time

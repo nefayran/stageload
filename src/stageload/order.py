@@ -33,6 +33,8 @@ _REAL_DATE = datetime(2002, 1, 1).timestamp()
 # a priority line's place: a cleaner writes 1900 + the line's index; a planner's tiers come later
 _PRIORITY = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
 _H3 = re.compile(r"(?<![a-z0-9])h3(?![0-9])|h3_shot|h3_exec|h3-modal|win-h3", re.I)
+H3_KIND = "<every h3 clip>"
+H3_MIN_S = 60.0          # no H3 clip is made in under a minute
 _KIND_CACHE: dict[Path, tuple[tuple[int, int], dict[tuple[str, str], float]]] = {}
 
 
@@ -121,7 +123,11 @@ def kind_medians(home: Path | None, limit: int = 6000) -> dict[tuple[str, str], 
             continue
         if run <= 0 or r.get("exit") not in (0, None) or r.get("state") == "waiting":
             continue
+        if run < H3_MIN_S and is_h3(r):   # a clip that finds its output already made exits in a fraction of a second
+            continue
         runs.setdefault((str(r.get("lane")), kind_of(str(r.get("who", "")))), []).append(run)
+        if is_h3(r):
+            runs.setdefault((str(r.get("lane")), H3_KIND), []).append(run)
     medians = {k: statistics.median(v) for k, v in runs.items()}
     _KIND_CACHE[path] = (key, medians)
     return medians
@@ -132,6 +138,10 @@ def expected_s(
 ) -> float | None:
     """How long the run takes: the median of its kind in this lane, else the ticket's expect_s."""
     found = medians.get((lane, kind_of(str(data.get("who", "")))))
+    if found is None and is_h3(data):
+        # a clip whose --who has no finished runs of its kind takes the median of the lane's H3 clips, not its ticket's
+        # own guess: a guess ten times too small let a floor group take twice its part of the lane
+        found = medians.get((lane, H3_KIND))
     if found is not None:
         return found
     try:
