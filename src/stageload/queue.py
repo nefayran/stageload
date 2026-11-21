@@ -805,7 +805,7 @@ def lane_ahead(
 
 
 LANE_SLOT_DEFAULTS = {
-    DEFAULT_LANE: 2, "light": 2, "codex": 3, "win": 1, "win-cpu": 2, "giz": 2, "mac-cpu": 2,
+    DEFAULT_LANE: 2, "light": 2, "codex": 3, "win": 1, "win-cpu": 2, "giz": 2, "mac-cpu": 1,
 }  # remote lanes: one slot per machine, more for a hosted service
 
 
@@ -815,8 +815,9 @@ def lane_slots(lane: str) -> int:
     codex (its jobs call a hosted image service and use no local memory), 1 in win (an 8 GB
     RTX 4060; 30.10: two GPU jobs side by side made Real-CUGAN fail its frames and ended a
     4K master; CPU work goes to win-cpu), 2 in win-cpu (a 20-thread machine whose jobs are often network or disk bound),
-    2 in mac-cpu (long CPU-only work on the Mac such as video encodes; 21.11: two 2-hour Short builds held both ram slots
-    while 20 H3 clips waited for the GPU) and 1 elsewhere.
+    1 in mac-cpu (long CPU-only work on the Mac such as video encodes; 21.11: two 2-hour Short builds held both ram slots
+    while 20 H3 clips waited for the GPU; with two slots, two builds booked 2 x 3 GB and an H3 clip's 28 GB no longer fit
+    the budget beside them, so the GPU stood again; one build leaves room for H3) and 1 elsewhere.
     A second ram run still has to fit the budget and pass the start gate, and two --gpu runs never
     run together."""
     try:

@@ -260,9 +260,10 @@ def test_codex_lane_holds_three_runs_and_any_lane_reads_its_own_slot_count(monke
     assert queue.lane_slots("codex") == 3
 
 
-def test_mac_cpu_lane_has_two_slots(monkeypatch):
+def test_mac_cpu_lane_has_one_slot(monkeypatch):
     # 21.11: two 2-hour Short builds (CPU encodes) held both ram slots while 20 H3 clips waited for the GPU; long CPU work
-    # on the Mac has its own lane, two at a time
+    # on the Mac has its own lane. One at a time: two builds booked 2 x 3 GB, and with an H3 clip (28 GB) and the 16 GB
+    # reserve that is 50 GB > 48 GB, so the GPU stood again; one build (47 GB) lets H3 run beside it
     from stageload import queue
     monkeypatch.delenv("STAGELOAD_MAC_CPU_SLOTS", raising=False)
-    assert queue.lane_slots("mac-cpu") == 2
+    assert queue.lane_slots("mac-cpu") == 1
