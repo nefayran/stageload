@@ -13,9 +13,13 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from stageload import queue
 from stageload.cli import main
 from stageload.queue import cancel, list_queue, matching_tickets, requeue, requeue_plan
+
+macos = pytest.mark.skipif(sys.platform != "darwin", reason="the queue gate reads macOS memory counters")
 
 RUN = """
 import sys
@@ -188,6 +192,7 @@ def test_requeue_picks_the_runs_a_signal_ended_and_nothing_else(tmp_path):
     assert not (tmp_path / "requeued").exists()
 
 
+@macos
 def test_requeue_starts_the_run_again_detached_in_its_cwd(tmp_path, monkeypatch):
     work = tmp_path / "work"
     work.mkdir()
@@ -253,6 +258,7 @@ def test_requeue_finds_waiting_runs_that_died_without_a_history_line(tmp_path):
     assert [(r["who"], r["exit"], why) for r, why in plan] == [("drama-y09a", "lost", "")]
 
 
+@macos
 def test_a_run_writes_its_queued_line(tmp_path):
     from stageload.guard import GuardConfig
     from stageload.queue import run_spec, write_spec

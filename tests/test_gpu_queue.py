@@ -68,12 +68,17 @@ def _wait_for(predicate, timeout=30.0):
     raise AssertionError("condition never came true")
 
 
+# Long enough that a new run's interpreter start on a slow CI machine ends while tts still holds
+# the GPU (1.5 s was outlasted by 0.1-0.6 s on GitHub runners).
+TTS_SECONDS = 5.0
+
+
 # --- B ------------------------------------------------------------------------------------
 
 
 def test_gpu_jobs_of_two_lanes_never_overlap_and_others_still_run_beside(tmp_path):
     log = tmp_path / "log"
-    tts = _start(tmp_path, log, "tts", 1.5, "light", True)
+    tts = _start(tmp_path, log, "tts", TTS_SECONDS, "light", True)
     _wait_for(lambda: log.exists() and "start tts" in log.read_text())
     render = _start(tmp_path, log, "render", 0.1, "ram", True)
     _wait_for(lambda: _held_by_gpu(tmp_path, "render"))
@@ -99,7 +104,7 @@ def test_a_job_without_gpu_behind_the_gpu_waiter_starts_first(tmp_path):
     # the GPU waiter keeps no slot while the GPU is taken, so blender, behind it in ram, runs
     # while tts holds the GPU; render takes the GPU after tts, in its turn
     log = tmp_path / "log"
-    tts = _start(tmp_path, log, "tts", 1.5, "light", True)
+    tts = _start(tmp_path, log, "tts", TTS_SECONDS, "light", True)
     _wait_for(lambda: log.exists() and "start tts" in log.read_text())
     render = _start(tmp_path, log, "render", 0.1, "ram", True)
     _wait_for(lambda: _held_by_gpu(tmp_path, "render"))
