@@ -28,7 +28,9 @@ RUN = """
 import sys
 from pathlib import Path
 from stageload.guard import GuardConfig, GuardIO
+from stageload import queue
 from stageload.queue import run_queued
+queue._ram = lambda: 48 * 2 ** 30  # the author's Mac: CI machines (7-16 GB) are under the reserve itself
 io = GuardIO(level=lambda: 90, swap_used=lambda: 0, processes=lambda: [],
              log=lambda line: print(line, file=sys.stderr, flush=True))
 sys.exit(run_queued({cmd!r}, GuardConfig(poll=0.05, grace=1.0), io=io, home=Path({home!r}),
@@ -69,7 +71,7 @@ def _wait_for(predicate, timeout=30.0):
 
 
 # Long enough that a new run's interpreter start on a slow CI machine ends while tts still holds
-# the GPU (1.5 s was outlasted by 0.1-0.6 s on GitHub runners).
+# the GPU.
 TTS_SECONDS = 5.0
 
 
