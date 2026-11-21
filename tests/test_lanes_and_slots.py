@@ -258,3 +258,11 @@ def test_codex_lane_holds_three_runs_and_any_lane_reads_its_own_slot_count(monke
     assert queue.lane_slots("win") == 1
     monkeypatch.setenv("STAGELOAD_CODEX_SLOTS", "not a number")
     assert queue.lane_slots("codex") == 3
+
+
+def test_mac_cpu_lane_has_two_slots(monkeypatch):
+    # 21.11: two 2-hour Short builds (CPU encodes) held both ram slots while 20 H3 clips waited for the GPU; long CPU work
+    # on the Mac has its own lane, two at a time
+    from stageload import queue
+    monkeypatch.delenv("STAGELOAD_MAC_CPU_SLOTS", raising=False)
+    assert queue.lane_slots("mac-cpu") == 2
