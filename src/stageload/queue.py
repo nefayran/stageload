@@ -1038,9 +1038,10 @@ def _wait_gpu(
     io: GuardIO,
     signals: _Signals,
     until: float,
-) -> bool:
-    """True once no other GPU job runs in any lane, none waits before ours, and the GPU lock is
-    ours.
+) -> str | None:
+    """"" once no other GPU job runs in any lane, none waits before ours, and the GPU lock is
+    ours; the head's --who when the run goes before a head that waits for the budget and keeps the
+    lock (gpu_backfill_head); None on a signal or after ``until``.
 
     A GPU job in the light lane made a render 2.4 times slower (200 s a step instead of 84 s).
     The entry keeps its lane's turn while it waits here.
@@ -1048,13 +1049,18 @@ def _wait_gpu(
     last = ""
     while True:
         if signals.count:
-            return False
+            return None
         ahead = gpu_ahead(ticket, _gpu_tickets(home), _gpu_starts(home))
+        head = gpu_backfill_head(home, ticket, config) if ahead else None
+        if head is not None:
+            ahead = [d for d in ahead if d.get("state") in _RUNS]
         if not ahead:
             try:
                 fcntl.flock(gpu_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return True
+                return ""
             except BlockingIOError:
+                if head is not None:
+                    return str(head.get("who") or head.get("pid"))
                 reason = "the GPU is still held by a command whose run is gone"
         else:
             reason = _gpu_reason(ahead)
@@ -1063,7 +1069,7 @@ def _wait_gpu(
             last = reason
         if io.clock() >= until:
             io.log(f"queue: no GPU turn after {config.start_timeout:.0f} s ({reason})")
-            return False
+            return None
         _nap(io, config.poll, signals)
 
 
@@ -1342,6 +1348,86 @@ def budget_reservation(
     return path, data, peak
 
 
+# 21.11: an H3 clip (28 GB, --gpu) took the GPU's turn at 16:56 and then waited for one GB of the
+# budget while a compilation build ran to 18:35. The GPU stood idle, and once the clip reserved its
+# peak the light lane waited with it: two Shorts' layouts and music, two voices, a post's narration.
+# While such a head could not start even if they did not run, a run expected to end within
+# BACKFILL_S passes its GPU turn and its kept memory, one run at a time: the head waits for one.
+BACKFILL_S = 10 * 60.0
+
+
+def expected_run_s(home: Path, data: dict[str, Any]) -> float | None:
+    """How long a run takes: the longer of its kind's median run in its lane and its ticket's
+    expect_s (21.11: marketing-voice's expect_s said 25 s, it ran 390 s), None when neither says."""
+    lane = str(data.get("lane") or DEFAULT_LANE)
+    found = [order_rules.expected_s(lane, data, order_rules.kind_medians(home))]
+    try:
+        found.append(float(data["expect_s"]))
+    except (KeyError, TypeError, ValueError):
+        pass
+    known = [s for s in found if s is not None]
+    return max(known) if known else None
+
+
+def may_backfill(
+    home: Path, ticket: Path, data: dict[str, Any], head: dict[str, Any],
+    tickets: list[tuple[Path, dict[str, Any]]], peaks: dict[str, int], config: GuardConfig, ram: int,
+) -> bool:
+    """The run of ``ticket`` may go before ``head``, a job that has its turn and waits for the
+    budget: it is expected to end within BACKFILL_S, no other run that went so runs, and the head
+    would not fit even if no such run ran."""
+    expect = expected_run_s(home, data)
+    if expect is None or expect > BACKFILL_S:
+        return False
+    running = [d for p, d in tickets if p != ticket and d.get("state") in _RUNS]
+    if any(d.get("backfill") for d in running):
+        return False
+    used = sum(counted_peak(d, peaks) for d in running)
+    return used + ticket_peak(head, peaks) + config.reserve > ram
+
+
+def _local_tickets(home: Path) -> list[tuple[Path, dict[str, Any]]]:
+    remote = remote_lanes()
+    root = home / "queue"
+    return [t for lane_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name not in remote)
+            for t in _live_tickets(lane_dir)]
+
+
+def gpu_backfill_head(home: Path, ticket: Path, config: GuardConfig) -> dict[str, Any] | None:
+    """The --gpu job that holds the GPU's turn but waits for the budget, if the run of ``ticket``
+    may take the GPU before it (may_backfill); else None."""
+    tickets = _local_tickets(home)
+    mine = dict(tickets).get(ticket)
+    if mine is None:
+        return None
+    peaks = history_peaks(home)
+    for path, data in tickets:
+        if (path != ticket and data.get("gpu") and data.get("gpu_turn")
+                and data.get("state") == "mem-wait" and "budget:" in str(data.get("mem_wait") or "")
+                and may_backfill(home, ticket, mine, data, tickets, peaks, config, _ram())):
+            return data
+    return None
+
+
+def _gpu_lent(home: Path, ticket: Path, entry: dict[str, Any], config: GuardConfig) -> str:
+    """Why a --gpu run cannot start beside another now ("" when it can): a head waits while a run
+    that went before it holds the GPU; a run that went before a head waits once the head started,
+    and while the head could start itself."""
+    others = [(p, d) for p, d in _gpu_tickets(home) if p != ticket]
+    for _, data in others:
+        if data.get("state") not in _RUNS:
+            continue
+        if data.get("backfill"):
+            return f"the GPU is lent to {data.get('who') or data.get('pid')} until it ends"
+        if entry.get("backfill"):
+            return f"{data.get('who') or data.get('pid')} took the GPU back"
+    heads = [d for _, d in others if d.get("gpu_turn") and d.get("state") == "mem-wait"
+             and "budget:" in str(d.get("mem_wait") or "")]
+    if entry.get("backfill") and heads and gpu_backfill_head(home, ticket, config) is None:
+        return f"{heads[0].get('who') or heads[0].get('pid')} may start now: it goes first"
+    return ""
+
+
 def budget_reason(
     home: Path, ticket: Path, own: int, config: GuardConfig, ram: int
 ) -> str:
@@ -1349,28 +1435,35 @@ def budget_reason(
     running jobs of every lane, private lanes too, plus the peak a long-waiting job reserves
     (budget_reservation; not for a small job), plus its own, plus the reserve, over the RAM.
     A job that does not fit even alone starts only when nothing else runs."""
+    return _budget(home, ticket, own, config, ram)[0]
+
+
+def _budget(
+    home: Path, ticket: Path, own: int, config: GuardConfig, ram: int
+) -> tuple[str, dict[str, Any] | None]:
+    """budget_reason, and the job whose kept memory the run passes (may_backfill), if it does."""
     peaks = history_peaks(home)
-    running, tickets = [], []
-    root = home / "queue"
-    remote = remote_lanes()
-    for lane_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name not in remote):
-        for path, data in _live_tickets(lane_dir):
-            tickets.append((path, data))
-            if path != ticket and data.get("state") in _RUNS:
-                running.append((data, counted_peak(data, peaks)))
+    tickets = _local_tickets(home)
+    running = [(data, counted_peak(data, peaks)) for path, data in tickets
+               if path != ticket and data.get("state") in _RUNS]
     held = budget_reservation(tickets, peaks, config, ram) if own > small_job_limit() else None
     if held and held[0] == ticket:
         held = None
+    passed = None
+    mine = dict(tickets).get(ticket)
+    if held and mine is not None and may_backfill(home, ticket, mine, held[1], tickets, peaks,
+                                                  config, ram):
+        passed, held = held[1], None
     kept = held[2] if held else 0
     used = sum(peak for _, peak in running)
     if (not running and not held) or used + kept + own + config.reserve <= ram:
-        return ""
+        return "", passed
     names = ", ".join(f"{d.get('who') or d.get('pid')} ({d.get('lane')}) {peak / GB:.0f} GB"
                       for d, peak in sorted(running, key=lambda r: -r[1])[:3])
     kept_words = (f" + kept {_gb(kept)} for {held[1].get('who') or held[1].get('pid')} "
                   f"({held[1].get('lane')}), waiting since {held[1].get('turn')}") if held else ""
     return (f"budget: running {_gb(used)} ({names}){kept_words} + ours {_gb(own)} + reserve "
-            f"{_gb(config.reserve)} > RAM {_gb(ram)}")
+            f"{_gb(config.reserve)} > RAM {_gb(ram)}"), None
 
 
 def remote_lanes() -> set[str]:
@@ -1627,10 +1720,19 @@ def _wait_memory(
             if not reasons:
                 fcntl.flock(budget_lock.fileno(), fcntl.LOCK_EX)
                 try:
-                    over = budget_reason(home, ticket, own, config, ram)
+                    over, passed = _budget(home, ticket, own, config, ram)
                     if over:
                         reasons.append(over)
+                    # under the budget's lock: a head and the run that went before it check
+                    # each other, so they never start on the GPU together
+                    lent = _gpu_lent(home, ticket, entry, config) if entry.get("gpu") else ""
+                    if lent:
+                        reasons.append(lent)
                     if not reasons:
+                        if passed is not None:
+                            entry["backfill"] = str(passed.get("who") or passed.get("pid"))
+                            io.log(f"queue: going before {entry['backfill']}, which waits for "
+                                   f"the budget (expected at most {BACKFILL_S / 60:.0f} min)")
                         entry.pop("mem_wait", None)
                         for key in _BLOCKED_KEYS:
                             entry.pop(key, None)
@@ -1769,6 +1871,8 @@ def run_queued(
                 reasons.append(over)
         if gpu:
             ahead = gpu_ahead(ticket, _gpu_tickets(home), _gpu_starts(home))
+            if ahead and gpu_backfill_head(home, ticket, config) is not None:
+                ahead = [d for d in ahead if d.get("state") in _RUNS]
             if ahead:
                 reasons.append(f"the GPU is taken, {_gpu_reason(ahead)}")
         return "; ".join(reasons)
@@ -1811,9 +1915,15 @@ def run_queued(
             if turn and gpu_lock is not None:
                 entry.update(state="gpu-wait", turn=_utc())
                 _write_json(ticket, entry)
-                turn = _wait_gpu(ticket, home, gpu_lock, config, io, signals, until)
+                before = _wait_gpu(ticket, home, gpu_lock, config, io, signals, until)
+                turn = before is not None
                 if turn:
                     entry["gpu_turn"] = True
+                    if before:
+                        # the head keeps the GPU's lock while it waits; it waits for us (_gpu_lent)
+                        entry["backfill"] = before
+                        io.log(f"queue: taking the GPU before {before}, which waits for the "
+                               f"budget (expected at most {BACKFILL_S / 60:.0f} min)")
                     _write_json(ticket, entry)
             # A lane that runs its command on another machine over ssh uses none of this Mac's
             # memory, so the local start gate, the room checks and the budget do not hold it.

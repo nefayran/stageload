@@ -27,7 +27,9 @@ from typing import Any
 from . import order as order_rules
 from .queue import _HOLDS_LANE, _TICKET, _all_tickets, _owner
 
-PLACE_ZERO = datetime(2001, 1, 1, tzinfo=timezone.utc)
+# 21.11: place 0 was 2001-01-01, after the priority lines (1900 + index) and the planner's tiers
+# (2000-*), so `--first` put a post's narration behind 40 clips; a planned place goes before both
+PLACE_ZERO = datetime(1899, 1, 1, tzinfo=timezone.utc)
 PLAN_FIELDS = ("deadline", "planned_by", "planned_why", "prefer_lane")
 
 

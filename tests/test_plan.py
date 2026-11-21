@@ -98,3 +98,9 @@ def test_the_waiting_run_keeps_the_plan_when_it_rewrites_its_entry(tmp_path, mon
     _write_json(t, {**own, "state": "waiting"})  # the run writes its own copy, made before the plan
     data = json.loads(t.read_text())
     assert (data["deadline"], data["prefer_lane"]) == (place_deadline(3), "win")
+
+
+def test_a_planned_first_place_goes_before_priority_lines_and_the_planners_tiers():
+    from stageload.order import _ts
+    first = _ts(place_deadline(0))
+    assert first < _ts("1900-01-01T00:00:00Z") < _ts("2000-07-18T11:53:27Z")

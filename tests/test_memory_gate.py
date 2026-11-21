@@ -6,6 +6,7 @@ free. The guard saw none of it: the render's footprint read 6.43 GB (Metal is mi
 budget counted from 8.3 GB at the start, and the level read 40 %.
 """
 
+import fcntl
 import json
 import os
 import re
@@ -408,3 +409,108 @@ def test_the_compressor_and_wired_readers_read_the_machine():
     ram = machine_ram()
     assert ram > 4 * GB
     assert 0 <= compressor_used() < ram and 0 < wired_used() < ram
+
+
+# --- going before a head that waits for the budget ------------------------------------------------
+# 21.11: an H3 clip (28 GB, --gpu) took the GPU's turn and waited for one GB of the budget while a
+# compilation build ran; the GPU stood idle for 1.5 h and, once the clip reserved its peak, the light
+# lane's layouts, music and voices waited with it.
+
+
+def _history(home, lane, who, run_s):
+    with (home / "history.jsonl").open("a") as file:
+        for _ in range(3):
+            file.write(json.dumps({"lane": lane, "who": who, "run_s": run_s, "exit": 0,
+                                   "end": "2026-11-21T00:00:00+00:00"}) + "\n")
+
+
+def _waiting_ticket(home, lane, who, mem_peak, gpu=False):
+    lane_dir = home / "queue" / lane
+    lane_dir.mkdir(parents=True, exist_ok=True)
+    ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
+    ticket.write_text(json.dumps({"pid": os.getpid(), "who": who, "lane": lane, "cmd": "python3 x.py",
+                                  "state": "mem-wait", "mem_peak": mem_peak, "gpu": gpu,
+                                  "mem_wait": "budget: …"}))
+    return ticket
+
+
+def test_a_short_job_passes_the_memory_kept_for_a_head_that_could_not_start_anyway(tmp_path, gate):
+    config = GuardConfig()
+    build = _running_ticket(tmp_path, "light", "c07-build", mem_peak=9 * GB)
+    # the build passed the clip 41 s after the clip's turn
+    build.write_text(json.dumps({**json.loads(build.read_text()), "started": time.strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 24 * 60))}))
+    _budget_waiting_ticket(tmp_path, "ram", "sh111-c5", 28 * GB, waited_s=25 * 60)
+    _history(tmp_path, "light", "anomaly-short-sh113-layout", 49)
+    _history(tmp_path, "light", "drama-ep02-music", 900)
+    layout = _waiting_ticket(tmp_path, "light", "anomaly-short-sh113-layout", 4 * GB)
+    music = _waiting_ticket(tmp_path, "light", "drama-ep02-music", 4 * GB)
+    # 9 + 28 + 12 = 49 GB of 48: the clip cannot start while the build runs, with or without the layout
+    assert queue._budget(tmp_path, layout, 4 * GB, config, 48 * GB) == ("", queue._live_tickets(
+        tmp_path / "queue" / "ram")[0][1])
+    # a 15-minute job is no short one: it waits behind the kept memory
+    assert "kept 28.0 GB for sh111-c5" in queue.budget_reason(tmp_path, music, 4 * GB, config, 48 * GB)
+    # while one job that went before the head runs, no second one goes
+    data = json.loads(layout.read_text())
+    layout.write_text(json.dumps({**data, "state": "running", "backfill": "sh111-c5"}))
+    other = _waiting_ticket(tmp_path, "light", "anomaly-short-sh114-layout", 4 * GB)
+    assert "kept 28.0 GB" in queue.budget_reason(tmp_path, other, 4 * GB, config, 48 * GB)
+    layout.unlink()
+    # once the head would fit without it (the build ran 9 GB, now 4), nothing passes it:
+    # 4 + 28 kept + 5 + 12 = 49 GB of 48
+    build.write_text(json.dumps({**json.loads(build.read_text()), "mem_peak": 4 * GB}))
+    assert "kept 28.0 GB" in queue.budget_reason(tmp_path, other, 5 * GB, config, 48 * GB)
+
+
+def _gpu_head(home, who, mem_peak):
+    ticket = _waiting_ticket(home, "ram", who, mem_peak, gpu=True)
+    data = json.loads(ticket.read_text())
+    data.update(gpu_turn=True, turn=time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()))
+    ticket.write_text(json.dumps(data))
+    return ticket
+
+
+def test_a_short_gpu_job_takes_the_gpu_a_head_holds_while_it_waits_for_the_budget(
+        tmp_path, gate, monkeypatch):
+    monkeypatch.setenv("STAGELOAD_RAM_SLOTS", "2")  # the Mac's: the head holds one
+    _running_ticket(tmp_path, "light", "c07-build", mem_peak=9 * GB)
+    head = _gpu_head(tmp_path, "sh111-c5", 28 * GB)
+    _history(tmp_path, "ram", "marketing-voice", 390)
+    held = (tmp_path / "queue" / "gpu.lock").open("a")   # the head keeps the GPU's lock
+    fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        r = Readings(home=tmp_path)
+        code = run_queued(TRUE, _quick(start_timeout=5), io=r.io(), home=tmp_path, lane="ram",
+                          who="marketing-voice", trace=None, gpu=True, mem_peak=2 * GB)
+        assert code == 0, r.logs
+        assert any("taking the GPU before sh111-c5" in line for line in r.logs), r.logs
+        # a clip of its own length (20 min) does not go before it
+        _history(tmp_path, "ram", "sh105-c3", 1200)
+        r = Readings(home=tmp_path)
+        assert run_queued(TRUE, _quick(start_timeout=0.4), io=r.io(), home=tmp_path, lane="ram",
+                          who="sh105-c3", trace=None, gpu=True, mem_peak=2 * GB) == EXIT_NO_ROOM
+    finally:
+        held.close()
+    assert head.exists()
+
+
+def test_a_head_waits_for_the_job_that_took_its_gpu_and_that_job_yields_once_the_head_fits(
+        tmp_path, gate):
+    config = GuardConfig()
+    build = _running_ticket(tmp_path, "light", "c07-build", mem_peak=9 * GB)
+    head = _gpu_head(tmp_path, "sh111-c5", 28 * GB)
+    _history(tmp_path, "ram", "marketing-voice", 390)
+    voice = _waiting_ticket(tmp_path, "ram", "marketing-voice", 2 * GB, gpu=True)
+    data = {**json.loads(voice.read_text()), "gpu_turn": True, "backfill": "sh111-c5"}
+    voice.write_text(json.dumps(data))
+    # the voice may start: the head cannot, the build keeps it out
+    assert queue._gpu_lent(tmp_path, voice, data, config) == ""
+    # once it runs, the head waits for it
+    voice.write_text(json.dumps({**data, "state": "running"}))
+    head_data = json.loads(head.read_text())
+    assert "lent to marketing-voice" in queue._gpu_lent(tmp_path, head, head_data, config)
+    # had the build ended before the voice started, the voice would let the head go first
+    voice.write_text(json.dumps(data))
+    build.unlink()
+    assert "sh111-c5 may start now" in queue._gpu_lent(tmp_path, voice, data, config)
+    assert queue._gpu_lent(tmp_path, head, head_data, config) == ""
