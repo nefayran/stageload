@@ -388,7 +388,25 @@ def test_a_job_past_its_peak_counts_at_its_measured_footprint(tmp_path):
          "mem_peak": 18 * GB, "trace": str(trace)}))
     reason = budget_reason(tmp_path, tmp_path / "queue" / "ram" / "x.json", 16 * GB,
                            GuardConfig(reserve=16 * GB), 48 * GB)
-    assert reason == ""  # 1.5 x 1.3 -> 2 GB floor + 16 + 16 fit in 48
+    assert reason == ""  # 1.5 x 1.3 -> 2 GB + 16 + 16 fit in 48
+
+
+def test_an_h3_clip_fits_beside_three_small_settled_runs(tmp_path):
+    # 21.11.2026 21:44Z: drama-ep02-V11af (28 GB) waited behind C07's 2K encode (1.75 GB), SH110's
+    # build (0.76 GB) and the disk map scan (0.02 GB), counted at a 2 GB floor each
+    for n, (who, lane, claim, seen) in enumerate([
+            ("anomaly_c-c07-build", "light", 2 * GB, int(1.75 * GB)),
+            ("anomaly-short-sh110-build", "mac-cpu", 3 * GB, int(0.76 * GB)),
+            ("janitor-diskmap-scan", "light", 800 * MB, 20 * MB)]):
+        lane_dir = tmp_path / "queue" / lane
+        lane_dir.mkdir(parents=True, exist_ok=True)
+        trace = _trace(tmp_path / f"t{n}.jsonl", [seen] * 700, interval=1.0)
+        (lane_dir / f"{n + 1:020d}-{os.getpid()}.json").write_text(json.dumps(
+            {"pid": os.getpid(), "who": who, "lane": lane, "state": "running",
+             "mem_peak": claim, "trace": str(trace)}))
+    reason = budget_reason(tmp_path, tmp_path / "queue" / "ram" / "x.json", 28 * GB,
+                           GuardConfig(reserve=16 * GB), 48 * GB)
+    assert reason == ""  # 2 (claim) + 1 + 0.8 (claim) + 28 + 16 fit in 48
 
 
 def test_a_young_job_counts_at_its_claim(tmp_path):

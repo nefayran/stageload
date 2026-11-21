@@ -1265,7 +1265,9 @@ def ticket_peak(data: dict[str, Any], peaks: dict[str, int]) -> int:
 
 SETTLED_S = 600          # a running job counts at its measured footprint once it has run this long
 SETTLED_FACTOR = 1.3     # headroom over the largest footprint of its last SETTLED_S
-SETTLED_FLOOR = 2 * GB   # never counted below this
+# 21.11.2026: 2 GB held an H3 clip (28 GB) off the GPU for hours behind three small runs whose
+# footprints were 1.75, 0.76 and 0.02 GB; the guard's pressure pause still stands behind the budget
+SETTLED_FLOOR = 1 * GB   # never counted below this
 
 
 def settled_footprint(data: dict[str, Any], window_s: float = SETTLED_S) -> int | None:
