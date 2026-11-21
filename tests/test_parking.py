@@ -22,7 +22,7 @@ def test_the_loop_is_valid_shell_and_tells_far_from_failure():
     assert f"-eq {NEAR_FAR}" in _PARK_LOOP and "trap" in _PARK_LOOP
 
 
-def test_a_resumed_run_keeps_when_it_was_first_queued(tmp_path):
+def test_a_resumed_run_keeps_when_it_was_first_queued(tmp_path, fake_system_io):
     since = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat(timespec="seconds")
     spec = write_spec(TRUE, GuardConfig(poll=0.05, start_timeout=3600, wait_free=0), home=tmp_path,
                       who="w11-c009", deadline="2000-01-01T00:00Z", since=since)

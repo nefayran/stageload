@@ -62,7 +62,7 @@ def _wait(cond, timeout=20):
 
 def test_procargs_reads_argv_and_environment():
     argv, env = procargs(os.getpid())
-    assert argv[0].endswith(("python", "python3")) or "python" in argv[0]
+    assert argv[0].lower().endswith(("python", "python3")) or "python" in argv[0].lower()
     assert env.get("HOME") == os.environ.get("HOME")
 
 

@@ -53,7 +53,7 @@ def test_the_ticket_and_the_history_keep_it(tmp_path):
     assert record["what"] == WHAT
 
 
-def test_a_spec_carries_it_and_an_old_spec_runs_without_it(tmp_path):
+def test_a_spec_carries_it_and_an_old_spec_runs_without_it(tmp_path, fake_system_io):
     spec = write_spec(TRUE, GuardConfig(poll=0.05), home=tmp_path, who="x", what=WHAT)
     assert json.loads(spec.read_text())["what"] == WHAT
     old = write_spec(TRUE, GuardConfig(poll=0.05), home=tmp_path, who="y")

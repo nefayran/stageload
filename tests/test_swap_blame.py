@@ -224,8 +224,10 @@ def test_running_jobs_reads_every_lane_and_finds_old_tickets_by_pid(tmp_path):
 
 RUN = """
 import pathlib, sys
-from stageload.guard import GuardConfig, GuardIO, list_processes
+from stageload import queue
+from stageload.guard import GuardConfig, GuardIO
 from stageload.queue import run_queued
+queue._ram = lambda: 48 * 2**30
 flag = pathlib.Path({flag!r})
 io = GuardIO(level=lambda: 90, swap_used=lambda: 10 * 2**30 if flag.exists() else 0,
              processes=lambda: [],
@@ -240,15 +242,16 @@ def _holder(marker, mb, seconds):
     return [
         sys.executable,
         "-c",
-        f"import pathlib, time; b = bytearray({mb} * 2**20); "
+        f"import pathlib, time; time.sleep(2.0); b = bytearray({mb} * 2**20); "
         f"pathlib.Path({str(marker)!r}).write_text('1'); "
         f"time.sleep({seconds})",
     ]
 
 
 @macos
-def test_two_guards_in_two_lanes_kill_only_the_job_that_grew(tmp_path):
+def test_two_guards_in_two_lanes_kill_only_the_job_that_grew(tmp_path, monkeypatch):
     # end to end, as on the machine: each guard in its own process reads the other's trace
+    monkeypatch.setenv("STAGELOAD_RESERVE_GB", "0")
     flag = tmp_path / "swap-grew"
     runs = {}
     for who, lane, mb, seconds in (("light-job", "light", 30, 4.0), ("ram-render", "ram", 500, 60)):
@@ -272,10 +275,14 @@ def test_two_guards_in_two_lanes_kill_only_the_job_that_grew(tmp_path):
     time.sleep(1.5)  # both meters have sampled the memory by now
     flag.write_text("1")  # swap jumps 10 GB: over both budgets
     light, render = runs["light-job"][0], runs["ram-render"][0]
-    assert render.wait(timeout=30) == EXIT_KILLED
-    assert light.wait(timeout=30) == 0
-    assert "not ours to stop" in light.stderr.read()
-    assert "Traceback" not in render.stderr.read()
+    render_code = render.wait(timeout=30)
+    render_log = render.stderr.read()
+    light_code = light.wait(timeout=30)
+    light_log = light.stderr.read()
+    assert render_code == EXIT_KILLED, render_log
+    assert light_code == 0, light_log
+    assert "not ours to stop" in light_log
+    assert "Traceback" not in render_log
 
 
 # --- C: stopping a group never crashes the guard ------------------------------------------

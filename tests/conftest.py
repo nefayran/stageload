@@ -34,6 +34,16 @@ def _no_memory_gate(monkeypatch):
         monkeypatch.setenv(name, value)
 
 
+@pytest.fixture
+def fake_system_io(monkeypatch):
+    from stageload import queue
+    from stageload.guard import GuardIO
+
+    io = GuardIO(level=lambda: 90, swap_used=lambda: 0, processes=lambda: [], log=lambda line: None)
+    monkeypatch.setattr(queue, "system_io", lambda: io)
+    return io
+
+
 def _forget_port_modules():
     for name in list(sys.modules):
         if name == "generate_mps" or name == "pixal3d" or name.startswith("pixal3d."):

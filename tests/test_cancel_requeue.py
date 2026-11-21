@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from stageload import queue
 from stageload.cli import main
@@ -127,7 +128,7 @@ def test_cancel_refuses_when_nothing_matches_and_dry_only_lists(tmp_path, monkey
         run.wait()
 
 
-def test_the_ticket_and_the_history_keep_how_to_run_it_again(tmp_path, monkeypatch):
+def test_the_ticket_and_the_history_keep_how_to_run_it_again(tmp_path, monkeypatch, fake_system_io):
     monkeypatch.setenv("STAGELOAD_HOME", str(tmp_path))
     for name in ("STAGELOAD_WHO", "STAGELOAD_OWNER", "STAGELOAD_DEADLINE", "STAGELOAD_GPU"):
         monkeypatch.delenv(name, raising=False)
@@ -190,6 +191,19 @@ def test_requeue_picks_the_runs_a_signal_ended_and_nothing_else(tmp_path):
 def test_requeue_starts_the_run_again_detached_in_its_cwd(tmp_path, monkeypatch):
     work = tmp_path / "work"
     work.mkdir()
+    fake_reader_dir = tmp_path / "fake-readers"
+    fake_reader_dir.mkdir()
+    (fake_reader_dir / "sitecustomize.py").write_text(
+        "from stageload import queue\n"
+        "from stageload.guard import GuardIO\n"
+        "queue.system_io = lambda: GuardIO(level=lambda: 90, swap_used=lambda: 0, "
+        "processes=lambda: [], log=lambda line: None)\n"
+    )
+    source = str(Path(queue.__file__).resolve().parents[1])
+    pythonpath = [str(fake_reader_dir), source]
+    if os.environ.get("PYTHONPATH"):
+        pythonpath.append(os.environ["PYTHONPATH"])
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(pythonpath))
     monkeypatch.setenv("STAGELOAD_WHO", "someone-else")  # the requeuer's own: it must not leak in
     _write_history(tmp_path, [{
         **_record("w10-post", 143, "2026-10-26T15:02:05+00:00"),

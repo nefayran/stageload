@@ -37,10 +37,11 @@ sys.exit(run_queued({cmd!r}, GuardConfig(poll=0.05, grace=1.0), io=io, home=Path
 
 
 def _job(log, who, seconds):
+    # Use a monotonic clock so wall-clock corrections cannot invent an overlap.
     code = (
         "import pathlib, sys, time; p = pathlib.Path(sys.argv[1]); "
-        "f = p.open('a'); f.write(f'start {sys.argv[2]} {time.time()}\\n'); f.flush(); "
-        f"time.sleep({seconds}); f.write(f'end {{sys.argv[2]}} {{time.time()}}\\n'); f.close()"
+        "f = p.open('a'); f.write(f'start {sys.argv[2]} {time.monotonic_ns()}\\n'); f.flush(); "
+        f"time.sleep({seconds}); f.write(f'end {{sys.argv[2]}} {{time.monotonic_ns()}}\\n'); f.close()"
     )
     return [sys.executable, "-c", code, str(log), who]
 
@@ -54,7 +55,7 @@ def _times(log):
     out = {}
     for line in log.read_text().splitlines():
         kind, who, t = line.split()
-        out[(kind, who)] = float(t)
+        out[(kind, who)] = int(t)
     return out
 
 
