@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from . import order as order_rules
+from . import slots
 from .guard import (
     EXIT_CANNOT_START,
     EXIT_KILLED,
@@ -124,7 +125,8 @@ def _alive(pid: int) -> bool:
 
 # Fields another program writes into a waiting entry (a queue planner, a priority list): the run keeps its entry in
 # memory and rewrites it while it waits, so these are taken from the file each time instead of being lost.
-KEPT_FIELDS = ("deadline", "planned_by", "planned_why", "real_deadline", "expect_s", "slot", "risk", "prefer_lane")
+KEPT_FIELDS = ("deadline", "deadline_by", "planned_by", "planned_why", "real_deadline", "expect_s", "slot", "risk",
+               "prefer_lane")
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
@@ -1809,6 +1811,12 @@ def run_queued(
         except OSError:
             cwd = None
     home = Path(home) if home is not None else default_home()
+    slot_deadline = None
+    if not deadline:
+        # 22.11: the queue orders each job by the slot it serves.
+        slot_deadline = slots.slot_for(who, home)
+        if slot_deadline:
+            deadline = slot_deadline
     lanes = list(dict.fromkeys(x.strip() for x in lane.split(",") if x.strip())) or [DEFAULT_LANE]
     io = replace(io, processes=_without_wrappers(io.processes, home))
     # `stageload reload` hands a run the time of the ticket it replaces, so the new run keeps
@@ -1837,6 +1845,9 @@ def run_queued(
             entry["what"] = what  # what it makes and what for, in plain English
         if deadline:
             entry["deadline"] = deadline
+            if slot_deadline:
+                entry["deadline_by"] = "slot"
+                entry["slot"] = slot_deadline
         if gpu and one not in remote_lanes():
             # a GPU on another machine is not this machine's GPU: a remote lane never takes the local GPU turn
             entry["gpu"] = True
