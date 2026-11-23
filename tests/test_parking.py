@@ -167,3 +167,23 @@ def test_dispatch_checks_only_the_head_of_a_long_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(queue, "near_in", lambda *a: calls.append(1) or real(*a))
     queue.dispatch(tmp_path)
     assert len(calls) <= 3 * (queue.lane_slots("ram") + queue.NEAR_EXTRA) + 10
+
+
+def test_dispatch_wakes_a_sleeper_whose_ticket_lost_its_parked_mark(tmp_path, monkeypatch):
+    """2026-11-23 22:07Z: the ram lane's head ticket (drama-ep02-V17as) slept on its FIFO with no «parked» in its file;
+    the dispatcher never woke it and the Mac's H3 lane stood idle with 420 clips waiting behind it. The FIFO is the
+    sleep itself, so a ticket with one is woken."""
+    import os
+
+    from stageload import queue
+    lane = tmp_path / "queue" / "ram"
+    lane.mkdir(parents=True)
+    p = lane / f"{1:020d}-{os.getpid()}.json"
+    p.write_text(json.dumps({"who": "clip-0", "pid": os.getpid(), "state": "waiting"}))
+    queue.wake_path(p).parent.mkdir()
+    os.mkfifo(queue.wake_path(p))
+    monkeypatch.setattr(queue, "_alive", lambda pid: True)
+    woke = []
+    monkeypatch.setattr(queue, "wake", lambda t: woke.append(t.name) or True)
+    assert queue.dispatch(tmp_path) == ["ram:clip-0"]
+    assert woke == [p.name]

@@ -2509,7 +2509,9 @@ def dispatch(home: Path) -> list[str]:
     root = home / "queue"
     for lane_dir in sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []:
         live = _live_tickets(lane_dir)
-        parked = [p for p, d in live if d.get("parked") and d.get("state") != "running"]
+        # the FIFO is the sleep itself: 23.11 the head ticket slept on it with no «parked» in its file, was never woken,
+        # and the ram lane stood idle with 420 clips behind it
+        parked = [p for p, d in live if d.get("state") != "running" and (d.get("parked") or wake_path(p).exists())]
         if not parked:
             continue
         starts, hold = _last_starts(lane_dir), _active_hold(lane_dir)
