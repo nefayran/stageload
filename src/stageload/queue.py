@@ -1736,6 +1736,11 @@ def _wait_memory(
     released = False
     regexes = [re.compile(pattern) for pattern in config.busy]
     quiet: dict[str, float | None] = {"since": None}
+    room_config = config
+    if entry.get("gpu"):
+        gpu_wait_free_max = int(os.environ.get("STAGELOAD_GPU_WAIT_FREE_MAX", "45"))
+        # GPU starts are protected by the budget and gates, not a caller's high --wait-free.
+        room_config = replace(config, wait_free=min(config.wait_free, gpu_wait_free_max))
 
     def idle() -> bool:
         return bool(idle_with_stale_swap(config, read_optional(io.compressor), io.level(),
@@ -1750,7 +1755,7 @@ def _wait_memory(
             # floor is the pause level (25 %); for a small job only its own gate counts
             small = is_small_job(entry)
             # --wait-free at the gate's level says it once
-            reasons += [r for r in _no_room_reasons(config, io, regexes, quiet, idle)
+            reasons += [r for r in _no_room_reasons(room_config, io, regexes, quiet, idle)
                         if r not in reasons and not (small and r.startswith("memory available"))]
             if released and not reasons:
                 # the way is clear: take a slot back, after whoever ran in it meanwhile. The
