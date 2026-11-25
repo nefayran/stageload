@@ -1598,7 +1598,7 @@ def _gate_for(
     if why:
         reasons = [r for r in reasons if r not in stale]
         note = f"{stale[0]}, but {why}: the swap is stale"
-    disk = disk_reason(home)
+    disk = disk_reason(home, heavy=not is_small_job(entry))
     if disk:
         reasons = reasons + [disk]
     return reasons, note
@@ -1640,16 +1640,26 @@ def disk_free(home: Path) -> int:
     return st.f_bavail * st.f_frsize
 
 
-def disk_reason(home: Path) -> str:
+def disk_reason(home: Path, heavy: bool = False) -> str:
     """No new job starts on this machine while its data volume has under $STAGELOAD_GATE_DISK_GB
-    free (8 GiB by default: only an emergency floor, so a full disk cannot stop the system). Running jobs are
+    free (8 GiB by default: only an emergency floor, so a full disk cannot stop the system). A heavy
+    job (not a small one: an H3 clip, a film build, a render) needs $STAGELOAD_GATE_HEAVY_DISK_GB
+    (40 GiB by default) and the hold is written to ``disk-hold.json`` in the queue home for the
+    office to read (25.11: the Mac sat at 18 GB free with every lane running). Running jobs are
     never touched."""
     try:
         limit = float(os.environ.get("STAGELOAD_GATE_DISK_GB", "8")) * GB
+        if heavy:
+            limit = max(limit, float(os.environ.get("STAGELOAD_GATE_HEAVY_DISK_GB", "40")) * GB)
         free = disk_free(home)
     except (OSError, ValueError):
         return ""
-    return f"disk: {free / GB:.1f} GiB free < {limit / GB:.0f} GiB" if free < limit else ""
+    if free >= limit:
+        return ""
+    if heavy:
+        _write_json(home / "disk-hold.json", {"at": time.time(), "free_gib": round(free / GB, 1),
+                                              "floor_gib": round(limit / GB)})
+    return f"disk: {free / GB:.1f} GiB free < {limit / GB:.0f} GiB"
 
 
 def _gate_words(entry: dict[str, Any], config: GuardConfig) -> str:

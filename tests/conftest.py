@@ -13,6 +13,13 @@ def _no_lane_hold(monkeypatch):
     monkeypatch.setenv("STAGELOAD_HOLD_S", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_heavy_disk_floor(monkeypatch):
+    """The 40 GiB floor of heavy starts reads the real disk of the machine the tests run on; the
+    tests of the floor set it."""
+    monkeypatch.setenv("STAGELOAD_GATE_HEAVY_DISK_GB", "0")
+
+
 # the absolute memory gate and pause, off: most tests fake swap of 10 GB or more, and the ones that
 # run real commands read the real machine. The tests of the gate turn it back on
 GATE_OFF = {"STAGELOAD_GATE_SWAP_GB": "100000", "STAGELOAD_GATE_COMPRESSOR_GB": "100000",

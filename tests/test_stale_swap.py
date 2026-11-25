@@ -113,6 +113,27 @@ def test_a_full_disk_holds_a_new_start(tmp_path, gate, monkeypatch):
     assert any("disk: 7.4 GiB free < 8 GiB" in line for line in logs)
 
 
+def test_a_heavy_start_waits_under_40_gib_and_says_so(tmp_path, gate, monkeypatch):
+    # 25.11: the Mac sat at 18 GB free and every lane kept starting H3 and film builds
+    monkeypatch.setenv("STAGELOAD_GATE_HEAVY_DISK_GB", "40")
+    monkeypatch.setattr(queue, "disk_free", lambda home: 18 * GB)
+    logs = []
+    assert _run(tmp_path, logs, swap=0) == 4        # 4 GB peak: a heavy job
+    assert any("disk: 18.0 GiB free < 40 GiB" in line for line in logs)
+    hold = json.loads((tmp_path / "disk-hold.json").read_text())
+    assert hold["free_gib"] == 18.0 and hold["floor_gib"] == 40
+
+
+def test_a_small_job_starts_between_8_and_40_gib(tmp_path, gate, monkeypatch):
+    monkeypatch.setenv("STAGELOAD_GATE_HEAVY_DISK_GB", "40")
+    monkeypatch.setattr(queue, "disk_free", lambda home: 18 * GB)
+    io = GuardIO(level=lambda: 60, swap_used=lambda: 0, processes=lambda: [], log=[].append,
+                 compressor=lambda: 0)
+    assert run_queued(TRUE, GuardConfig(poll=0.05, start_timeout=0.4, wait_free=0), io=io, home=tmp_path,
+                      trace=None, who="janitor-diskmap-scan", mem_peak=800 * 1024 * 1024) == 0
+    assert not (tmp_path / "disk-hold.json").exists()
+
+
 def test_enough_disk_lets_it_start(tmp_path, gate, monkeypatch):
     monkeypatch.setattr(queue, "disk_free", lambda home: 89 * GB)
     logs = []
