@@ -321,16 +321,24 @@ def _note_start(lane_dir: Path, owner: str) -> None:
     _write_json(lane_dir / "owners.json", starts)
 
 
-def _deadline(data: dict[str, Any]) -> float:
+def _deadline(data: dict[str, Any], now: float | None = None) -> float:
     """The entry's deadline as a timestamp, or infinity: an entry without one waits behind every
-    entry with one."""
+    entry with one.
+
+    25.11: a deadline more than STAGELOAD_DEADLINE_HORIZON_DAYS (7) ahead counts as none. Thorn's
+    EP01 clips carry their 30.12 slot, so the 4 H3 clips of Rodion's card 5465 (no slot, due that
+    day) sat behind 82 of them; a slot weeks away now takes turns with the undated work instead."""
     value = data.get("deadline")
     if not value:
         return float("inf")
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        due = datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return float("inf")
+    horizon = float(os.environ.get("STAGELOAD_DEADLINE_HORIZON_DAYS", "7")) * 86400
+    if due > (time.time() if now is None else now) + horizon:
+        return float("inf")
+    return due
 
 
 def fair_order(tickets: list[tuple[Path, dict[str, Any]]], last: dict[str, int]) -> list[Path]:

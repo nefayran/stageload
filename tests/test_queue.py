@@ -4,6 +4,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -450,3 +451,24 @@ def test_an_earlier_deadline_starts_first_and_turns_stay_fair_within_it(tmp_path
     # the three due on the 19th first (w02 and x take turns), then the one due on the 20th, then the one with none
     assert order[:3] == [f"{2:020d}-2.json", f"{5:020d}-5.json", f"{4:020d}-4.json"]
     assert order[3:] == [f"{3:020d}-3.json", f"{1:020d}-1.json"]
+
+
+def test_a_deadline_weeks_away_takes_turns_with_undated_work(tmp_path, monkeypatch):
+    # 25.11: Thorn's clips with their 30.12 slot held the 4 H3 clips of card 5465 (no slot, due
+    # that day) at places 85-91; a deadline past the horizon counts as none
+    from stageload.queue import fair_order
+
+    monkeypatch.delenv("STAGELOAD_DEADLINE_HORIZON_DAYS", raising=False)
+    monkeypatch.delenv("STAGELOAD_SHARES", raising=False)
+    far = datetime.fromtimestamp(time.time() + 35 * 86400, timezone.utc).isoformat()
+    near = datetime.fromtimestamp(time.time() + 2 * 86400, timezone.utc).isoformat()
+    tickets = [
+        (tmp_path / f"{1:020d}-1.json", {"who": "thorn-ep01-v1", "state": "waiting", "deadline": far}),
+        (tmp_path / f"{2:020d}-2.json", {"who": "thorn-ep01-v2", "state": "waiting", "deadline": far}),
+        (tmp_path / f"{3:020d}-3.json", {"who": "wanderer-5465-a", "state": "waiting"}),
+        (tmp_path / f"{4:020d}-4.json", {"who": "sh113-c1", "state": "waiting", "deadline": near}),
+    ]
+    old = int((time.time() - 86400) * 1e9)
+    order = [p.name for p in fair_order(tickets, {"thorn": old + 10, "wanderer": old})]
+    # the near slot first, then the owner who started least recently, then thorn's batch
+    assert order == [f"{4:020d}-4.json", f"{3:020d}-3.json", f"{1:020d}-1.json", f"{2:020d}-2.json"]
