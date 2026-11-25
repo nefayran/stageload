@@ -799,7 +799,7 @@ def lane_ahead(
             left = float(hold["until"]) - time.time()
             return holders, (f"held {max(0.0, left):.0f} s for {hold.get('owner')}, "
                              f"whose {hold.get('who') or 'run'} just ended")
-    if not ahead and len(holders) < slots:
+    if not ahead and len(holders) < slots + (1 if lent_place(ticket.parent, mine, live) else 0):
         return [], ""
     ahead = holders + ahead
     names = ", ".join(str(d.get("who") or d.get("pid")) for d in ahead[:3])
@@ -850,6 +850,28 @@ def _with_express(lane_dir: Path, locks: list[IO[str]]) -> None:
     """The express place joins the run's own locks, after its slots, so a free slot goes first."""
     if not any(Path(lock.name).name == EXPRESS_LOCK for lock in locks):
         locks.append((lane_dir / EXPRESS_LOCK).open("a"))
+
+
+# 25.11: a --gpu head waiting for the memory gate (51 % < 75 % under a 96-minute run) kept one of the
+# ram lane's two slots, the other held that run, and four jobs that fit the budget (a key check, a
+# sound bed) waited 90 minutes for a slot with the head running nothing. While such a head waits, the
+# express place is open to one non-GPU job expected to end within HEAD_BACKFILL_S; the gate, the
+# budget and the GPU still hold it, and the head keeps its own slot.
+HEAD_BACKFILL_S = 30 * 60.0
+
+
+def gpu_head_idle(live: list[tuple[Path, dict[str, Any]]]) -> bool:
+    """A --gpu job holds a slot of the lane but waits for memory: it runs nothing."""
+    return any(d.get("gpu") and d.get("gpu_turn") and d.get("state") == "mem-wait"
+               and not d.get("released") and not d.get("express") for _, d in live)
+
+
+def lent_place(lane_dir: Path, data: dict[str, Any], live: list[tuple[Path, dict[str, Any]]]) -> bool:
+    """``data`` may take the express place while a --gpu head of its lane waits for memory."""
+    if data.get("gpu") or lane_dir.name in remote_lanes() or not gpu_head_idle(live):
+        return False
+    expect = expected_run_s(_home_of(live), data)
+    return expect is not None and expect <= HEAD_BACKFILL_S
 
 
 def _take_slot(locks: list[IO[str]]) -> IO[str] | None:
@@ -959,7 +981,8 @@ def _wait_turn(
                 if mine is not None:
                     _clear_blocked(ticket, mine)  # the mark is for a turn we could not take
                 tiny = mine is not None and _tiny(lane_dir, mine, live)
-                if tiny:
+                lent = mine is not None and lent_place(lane_dir, mine, live)
+                if tiny or lent:
                     _with_express(lane_dir, locks)
                 lock = _take_slot(locks)
                 if lock is not None:
@@ -967,6 +990,7 @@ def _wait_turn(
                         (lane_dir / "hold.json").unlink(missing_ok=True)  # used up
                     return index, lock
                 reason = ("the express place is taken" if tiny
+                          else "the place lent while a GPU job waits for memory is taken" if lent
                           else "the lane is still held by a command whose run is gone")
             reasons.append(reason if len(choices) == 1 else f"{lane_dir.name}: {reason}")
         reason = "; ".join(reasons)
@@ -1731,7 +1755,15 @@ def _wait_memory(
             if released and not reasons:
                 # the way is clear: take a slot back, after whoever ran in it meanwhile. The
                 # blocked marks stay until the real start: a job that waited long keeps its claim
+                live = _live_tickets(ticket.parent)
+                if lent_place(ticket.parent, entry, live):
+                    extra: list[IO[str]] = []
+                    _with_express(ticket.parent, extra)
+                    locks = [*locks, *[x for x in extra if not any(
+                        Path(k.name).name == EXPRESS_LOCK for k in locks)]]
                 taken = _take_slot(list(locks) or [slot])
+                if taken is not None and Path(taken.name).name == EXPRESS_LOCK:
+                    entry["express"] = True
                 if taken is None:
                     reasons.append("the lane's slots are taken by runs that passed while we waited")
                 else:
