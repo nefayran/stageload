@@ -81,13 +81,13 @@ class Readings:
         )
 
 
-def _running_ticket(home, lane, who, mem_peak=None, cmd="python3 job.py"):
+def _running_ticket(home, lane, who, mem_peak=None, cmd="python3 job.py", **fields):
     """A running job of another session: its run is this test process, so it stays alive."""
     lane_dir = home / "queue" / lane
     lane_dir.mkdir(parents=True, exist_ok=True)
     ticket = lane_dir / f"{time.time_ns():020d}-{os.getpid()}.json"
     data = {"pid": os.getpid(), "who": who, "lane": lane, "cmd": cmd, "state": "running",
-            "started": "2026-10-24T00:30:00+00:00"}
+            "started": "2026-10-24T00:30:00+00:00", **fields}
     if mem_peak is not None:
         data["mem_peak"] = mem_peak
     ticket.write_text(json.dumps(data))
@@ -226,6 +226,25 @@ def test_a_fresh_budget_wait_or_one_kept_out_by_an_older_run_reserves_nothing(tm
     _running_ticket(tmp_path, "now-cpu", "now-sim", mem_peak=30 * GB)
     _budget_waiting_ticket(tmp_path, "ram", "now-render", 25 * GB, waited_s=25 * 60)
     assert "kept" not in queue.budget_reason(tmp_path, new, 2 * GB, config, 48 * GB)
+
+
+def test_an_older_run_about_to_end_does_not_lift_the_reservation(tmp_path, gate):
+    # 25.11: an H3 clip (28 GB) waited from 13:04; a 2-minute japan run (4 GB) that started before
+    # its turn left no room, so nothing was kept, and at 13:43 a 96-minute voices job (14 GB) took
+    # the room the clip would have had two minutes later. The GPU stood idle to 15:20.
+    config, new = GuardConfig(reserve=16 * GB), tmp_path / "queue" / "ram" / "new.json"
+    started = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 40 * 60))
+    _running_ticket(tmp_path, "light", "w23-vo-measure", mem_peak=2 * GB)
+    short = _running_ticket(tmp_path, "ram", "japan-nihon-app1", mem_peak=4 * GB, started=started,
+                            expect_s=41 * 60)
+    _budget_waiting_ticket(tmp_path, "ram", "thorn-ep01-V07ap", 28 * GB, waited_s=39 * 60)
+    # 2 + 4 + 28 + 16 = 50 GB of 48: without the 2-minute run it would fit, so the clip keeps its room
+    assert "kept 28.0 GB for thorn-ep01-V07ap" in queue.budget_reason(tmp_path, new, 14 * GB, config,
+                                                                      48 * GB)
+    # an older run with no known length still counts as long: nothing is kept
+    short.unlink()
+    _running_ticket(tmp_path, "ram", "japan-nihon-app2", mem_peak=4 * GB, started=started)
+    assert "kept" not in queue.budget_reason(tmp_path, new, 14 * GB, config, 48 * GB)
 
 
 def test_of_two_jobs_waiting_for_the_budget_only_the_oldest_reserves(tmp_path, gate):

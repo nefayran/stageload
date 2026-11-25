@@ -1322,7 +1322,7 @@ def _utc_seconds(value: Any) -> float | None:
 
 def budget_reservation(
     tickets: list[tuple[Path, dict[str, Any]]], peaks: dict[str, int], config: GuardConfig, ram: int,
-    now: float | None = None,
+    now: float | None = None, home: Path | None = None,
 ) -> tuple[Path, dict[str, Any], int] | None:
     """The one waiting job whose memory the budget keeps free: (ticket, entry, peak), or None.
 
@@ -1333,7 +1333,9 @@ def budget_reservation(
     more; it starts once the runs that passed it end.
     Only the oldest such job reserves, and it never counts itself, so two big jobs never hold each
     other. It reserves only while the jobs that ran before its turn leave room for it: a job kept out
-    by an older long run does not hold every other job back for that run's whole length."""
+    by an older long run does not hold every other job back for that run's whole length. An older
+    run expected to end within BACKFILL_S is not long and does not lift the reservation (25.11: a
+    2-minute run let a 96-minute one take an H3 clip's room)."""
     now = time.time() if now is None else now
     waiting = []
     for path, data in tickets:
@@ -1345,8 +1347,14 @@ def budget_reservation(
         return None
     since, path, data = min(waiting, key=lambda w: (w[0], w[1].name))
     peak = ticket_peak(data, peaks)
+    def ends_soon(d: dict[str, Any]) -> bool:
+        expect = expected_run_s(home, d) if home is not None else None
+        began = _utc_seconds(d.get("started"))
+        # a run long past its expected end is no longer known to end soon
+        return expect is not None and began is not None and abs(began + expect - now) <= BACKFILL_S
+
     older = sum(counted_peak(d, peaks) for p, d in tickets if p != path and d.get("state") in _RUNS
-                and (_utc_seconds(d.get("started")) or now) < since)
+                and (_utc_seconds(d.get("started")) or now) < since and not ends_soon(d))
     if older + peak + config.reserve > ram:
         return None
     return path, data, peak
@@ -1450,7 +1458,7 @@ def _budget(
     tickets = _local_tickets(home)
     running = [(data, counted_peak(data, peaks)) for path, data in tickets
                if path != ticket and data.get("state") in _RUNS]
-    held = budget_reservation(tickets, peaks, config, ram) if own > small_job_limit() else None
+    held = budget_reservation(tickets, peaks, config, ram, home=home) if own > small_job_limit() else None
     if held and held[0] == ticket:
         held = None
     passed = None
