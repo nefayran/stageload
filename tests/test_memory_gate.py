@@ -247,6 +247,33 @@ def test_an_older_run_about_to_end_does_not_lift_the_reservation(tmp_path, gate)
     assert "kept" not in queue.budget_reason(tmp_path, new, 14 * GB, config, 48 * GB)
 
 
+def test_a_gpu_head_ignores_an_overdue_older_run_with_a_known_length(tmp_path, gate, monkeypatch):
+    config, new = GuardConfig(reserve=16 * GB), tmp_path / "queue" / "light" / "new.json"
+    now = time.time()
+    started = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - 100 * 60))
+    _running_ticket(tmp_path, "ram", "drama-voices", mem_peak=9 * GB, started=started,
+                    expect_s=96 * 60)
+    _budget_waiting_ticket(tmp_path, "ram", "gpu-head", 28 * GB, waited_s=40 * 60)
+    monkeypatch.setattr(queue.time, "time", lambda: now + 20 * 60)
+
+    why = queue.budget_reason(tmp_path, new, 18 * GB, config, 48 * GB)
+    assert "kept 28.0 GB for gpu-head (ram)" in why
+
+
+def test_a_gpu_head_keeps_unknown_or_distant_older_runs_in_the_budget(tmp_path, gate):
+    config, new = GuardConfig(reserve=16 * GB), tmp_path / "queue" / "light" / "new.json"
+    now = time.time()
+    started = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - 100 * 60))
+    unknown = _running_ticket(tmp_path, "ram", "unknown-length", mem_peak=9 * GB, started=started)
+    _budget_waiting_ticket(tmp_path, "ram", "gpu-head", 28 * GB, waited_s=40 * 60)
+    assert "kept" not in queue.budget_reason(tmp_path, new, 18 * GB, config, 48 * GB)
+
+    unknown.unlink()
+    _running_ticket(tmp_path, "ram", "distant-end", mem_peak=9 * GB, started=started,
+                    expect_s=5 * 60 * 60)
+    assert "kept" not in queue.budget_reason(tmp_path, new, 18 * GB, config, 48 * GB)
+
+
 def test_of_two_jobs_waiting_for_the_budget_only_the_oldest_reserves(tmp_path, gate):
     config = GuardConfig()
     old = _budget_waiting_ticket(tmp_path, "ram", "render-a", 20 * GB, waited_s=40 * 60)

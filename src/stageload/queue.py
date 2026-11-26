@@ -1395,7 +1395,8 @@ def budget_reservation(
     other. It reserves only while the jobs that ran before its turn leave room for it: a job kept out
     by an older long run does not hold every other job back for that run's whole length. An older
     run expected to end within BACKFILL_S is not long and does not lift the reservation (25.11: a
-    2-minute run let a 96-minute one take an H3 clip's room)."""
+    2-minute run let a 96-minute one take an H3 clip's room). For a GPU head, a known run expected
+    to end within LONG_RUN_AHEAD_S is also not long; an overdue run counts as ending soon."""
     now = time.time() if now is None else now
     waiting = []
     for path, data in tickets:
@@ -1410,8 +1411,11 @@ def budget_reservation(
     def ends_soon(d: dict[str, Any]) -> bool:
         expect = expected_run_s(home, d) if home is not None else None
         began = _utc_seconds(d.get("started"))
-        # a run long past its expected end is no longer known to end soon
-        return expect is not None and began is not None and abs(began + expect - now) <= BACKFILL_S
+        if expect is None or began is None:
+            return False
+        remaining = began + expect - now
+        return abs(remaining) <= BACKFILL_S or (
+            data.get("gpu") and remaining <= LONG_RUN_AHEAD_S)
 
     older = sum(counted_peak(d, peaks) for p, d in tickets if p != path and d.get("state") in _RUNS
                 and (_utc_seconds(d.get("started")) or now) < since and not ends_soon(d))
@@ -1426,6 +1430,7 @@ def budget_reservation(
 # While such a head could not start even if they did not run, a run expected to end within
 # BACKFILL_S passes its GPU turn and its kept memory, one run at a time: the head waits for one.
 BACKFILL_S = 10 * 60.0
+LONG_RUN_AHEAD_S = 2 * 60 * 60.0
 
 
 def expected_run_s(home: Path, data: dict[str, Any]) -> float | None:
