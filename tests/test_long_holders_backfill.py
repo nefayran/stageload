@@ -56,8 +56,15 @@ def test_a_long_job_still_waits_for_a_slot(tmp_path, machine):
     assert lane_ahead(live[-1][0], live, {}, None, slots=2)[1].startswith("2 ahead")
 
 
-def test_no_place_is_lent_while_one_holder_is_young(tmp_path, machine):
-    live = _lane(tmp_path, minutes=(285, 20)) + [
+def test_a_place_is_lent_when_one_slot_is_held_for_hours_and_the_other_turns_over(tmp_path, machine):
+    # 26.11: drama-ep02-rough held one slot for 10 h, the other went from one w23-vo-pick to the next
+    live = _lane(tmp_path, minutes=(600, 20)) + [
+        _ticket(tmp_path, "local-ci-stack", 3, state="waiting", expect_s=126)]
+    assert lane_ahead(live[-1][0], live, {}, None, slots=2) == ([], "")
+
+
+def test_no_place_is_lent_while_both_holders_are_young(tmp_path, machine):
+    live = _lane(tmp_path, minutes=(40, 20)) + [
         _ticket(tmp_path, "local-ci-686", 3, state="waiting", expect_s=126)]
     assert lane_ahead(live[-1][0], live, {}, None, slots=2)[1].startswith("2 ahead")
 

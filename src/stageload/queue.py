@@ -876,18 +876,21 @@ def gpu_head_idle(live: list[tuple[Path, dict[str, Any]]]) -> bool:
 
 # 25.11: drama-ep02-rough (expected 13 min) and w23-vo-pick (2.1 h) held both light slots for 4 to
 # 5 hours; local-ci-686 (2 minutes) waited 2.5 h and NOW's showcase step timed out twice in the queue.
-# While every slot of the lane is held by a run older than LONG_HOLD_S, the express place is lent
-# the same way as under an idle --gpu head.
+# 26.11: drama-ep02-rough held one light slot for 10 h while the other went from one w23-vo-pick to
+# the next (30 min each); seven jobs (local-ci-stack with nine AllKeep PRs, two showcases, SH121's
+# music and animatic) waited 50-80 min for that one slot, and no place was lent because one holder
+# was always young. While every slot of the lane is held and one of them by a run older than
+# LONG_HOLD_S, the express place is lent the same way as under an idle --gpu head.
 LONG_HOLD_S = 60 * 60.0
 
 
 def slots_held_long(lane_dir: Path, live: list[tuple[Path, dict[str, Any]]]) -> bool:
-    """Every slot of the lane is held by a run that started more than LONG_HOLD_S ago."""
+    """Every slot of the lane is held, one of them by a run that started more than LONG_HOLD_S ago."""
     holders = [d for _, d in live if _holds_lane(d) and not d.get("released") and not d.get("express")]
     if len(holders) < lane_slots(lane_dir.name):
         return False
     now = time.time()
-    return all(0 < _timestamp(d.get("started")) < now - LONG_HOLD_S for d in holders)
+    return any(0 < _timestamp(d.get("started")) < now - LONG_HOLD_S for d in holders)
 
 
 def lent_place(lane_dir: Path, data: dict[str, Any], live: list[tuple[Path, dict[str, Any]]]) -> bool:
