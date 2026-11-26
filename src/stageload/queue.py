@@ -22,6 +22,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -140,9 +141,14 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
         for key in KEPT_FIELDS:
             if key in on_disk:
                 data[key] = on_disk[key]
-    tmp = path.with_name(f".tmp-{path.name}")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
+    # Each writer has its own temporary file: with one shared name, two jobs waiting on the disk gate
+    # renamed each other's file away and one died with FileNotFoundError (26.11).
+    tmp = path.with_name(f".tmp-{os.getpid()}-{threading.get_ident()}-{path.name}")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _live_tickets(lane_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
